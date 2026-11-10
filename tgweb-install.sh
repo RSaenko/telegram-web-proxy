@@ -61,7 +61,7 @@ Usage:
 Опции установки/обновления:
   --hostname FQDN           Домен
   --email EMAIL             Email для Let's Encrypt
-  --secret 32hex            MTProxy-секрет (32 hex, можно с префиксом dd)
+  --secret 32hex            MTProxy-секрет (32 hex)
   --base-path SLUG|none     Базовый путь (default: генерируется)
   --site-dir PATH           Каталог сайта (default: /srv/tproxy-site)
   --no-site                 Не устанавливать сайт
