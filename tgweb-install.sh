@@ -1346,7 +1346,11 @@ main() {
     update)    run_install ;;
     uninstall) run_uninstall ;;
     purge)     run_purge ;;
-    config)      require_root; run_config "$@" ;;\n    status)      require_root; status_command ;;\n    diagnostics) require_root; diagnostics_command ;;\n    backup)      require_root; backup_command "$@" ;;\n    restore)     require_root; restore_command "$@" ;;
+    config)      require_root; run_config "$@" ;;
+    status)      require_root; status_command ;;
+    diagnostics) require_root; diagnostics_command ;;
+    backup)      require_root; backup_command "$@" ;;
+    restore)     require_root; restore_command "$@" ;;
   esac
 }
 
