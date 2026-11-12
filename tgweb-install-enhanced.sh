@@ -888,11 +888,12 @@ generate_proxy_qr() {
 
 print_proxy_qr_terminal() {
   local link="$1"
-  if command -v qrencode >/dev/null 2>&1 && [[ -t 1 ]]; then
-    echo
-    echo "QR-код для подключения:"
-    qrencode -t ANSIUTF8 "$link"
-  fi
+  [[ -n "$link" ]] || return 0
+  command -v qrencode >/dev/null 2>&1 || die "qrencode не установлен"
+  echo
+  echo "QR-код для подключения (отсканируй камерой телефона):"
+  qrencode -t ANSIUTF8 -m 2 "$link"
+  echo
 }
 
 print_summary() {
@@ -1016,8 +1017,8 @@ EOF
     echo "Конфигурация сохранена: $output (0600)"
   else
     printf '%s\n' "$report"
-    [[ -n "$link" ]] && print_proxy_qr_terminal "$link"
   fi
+  [[ -n "$link" ]] && print_proxy_qr_terminal "$link"
 }
 
 load_existing_config() {
