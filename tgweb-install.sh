@@ -1337,7 +1337,7 @@ show_tools_menu() {
         read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
         ;;
       4)
-        read -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "Абсолютный путь к архиву: " archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
