@@ -1317,7 +1317,7 @@ run_purge() {
 
 diagnostics_command() {
   local failed=0 svc state file port_output log_output
-  local -a services=("tproxy-server:Основной прокси" "mtproxy:MTProxy" "tproxy-firewall:Firewall" "refresh-mtproxy-config.timer:Обновление конфигурации" "caddy:Caddy")
+  local -a services=("tproxy-server:Основной прокси (tproxy-server)" "mtproxy:Прокси MTProxy (mtproxy)" "tproxy-firewall:Сетевой экран (tproxy-firewall)" "refresh-mtproxy-config.timer:Таймер обновления конфигурации (refresh-mtproxy-config.timer)" "caddy:Веб-сервер и HTTPS (caddy)")
   local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
 
   echo
