@@ -541,7 +541,10 @@ server {
 }
 EOF
   nginx -t || die "Nginx-конфигурация невалидна"
+  # Применяем уже TLS-конфигурацию: до этого Nginx мог быть запущен
+  # только с временным HTTP-only server block для выпуска сертификата.
   systemctl enable nginx.service
+  systemctl reload nginx.service || systemctl restart nginx.service || die "Не удалось применить TLS-конфигурацию Nginx"
   install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
   cat > /etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx <<EOF
 #!/usr/bin/env bash
