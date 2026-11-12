@@ -1271,15 +1271,73 @@ status_command() {
   return 0
 }
 diagnostics_command() {
-  echo "=== Состояние служб ==="; status_command || true
-  echo "=== Проверка конфигурации ==="
-  if [[ -r /etc/tproxy-server/config.json && -r /etc/tproxy-server/profiles.json ]]; then
-    jq empty /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json
-    stat -c '%a %U:%G %n' /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json
-  else warn "Конфигурация tproxy-server не найдена"; fi
-  for svc in tproxy-server mtproxy tproxy-firewall caddy; do
-    echo "--- $svc ---"; journalctl -u "$svc" -n 30 --no-pager 2>/dev/null || true
+  local failed=0 svc state file json_ok=1 port_output log_output
+  local -a services=("tproxy-server:Основной прокси" "mtproxy:MTProxy" "tproxy-firewall:Firewall" "refresh-mtproxy-config.timer:Обновление конфигурации" "caddy:Caddy")
+  local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
+
+  echo
+  echo "════════════════════════════════════════════════════════════"
+  echo "  ДИАГНОСТИКА СЕРВЕРА"
+  echo "════════════════════════════════════════════════════════════"
+
+  echo
+  echo "1. Состояние служб"
+  for svc in "${services[@]}"; do
+    local unit="${svc%%:*}" label="${svc#*:}"
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    if [[ "$state" == "active" ]]; then
+      printf "  [✓] %-28s %s\n" "$label" "работает"
+    else
+      printf "  [✗] %-28s %s\n" "$label" "${state:-неизвестно}"
+      failed=1
+    fi
   done
+
+  echo
+  echo "2. Файлы конфигурации"
+  for file in "${configs[@]}"; do
+    if [[ ! -f "$file" ]]; then
+      printf "  [✗] %s — файл не найден\n" "$file"
+      failed=1
+    elif [[ ! -r "$file" ]]; then
+      printf "  [✗] %s — нет прав на чтение\n" "$file"
+      failed=1
+    elif jq empty "$file" >/dev/null 2>&1; then
+      printf "  [✓] %s — JSON корректен\n" "$file"
+      stat -c '      Права: %a, владелец: %U:%G' "$file" 2>/dev/null || true
+    else
+      printf "  [✗] %s — ошибка в JSON\n" "$file"
+      failed=1
+    fi
+  done
+
+  echo
+  echo "3. Сетевые порты"
+  port_output="$(ss -lntH 2>/dev/null || true)"
+  if [[ -n "$port_output" ]]; then
+    printf '%s\n' "$port_output" | awk '{print "  • " $4 "  (TCP)"}'
+  else
+    echo "  [!] Не удалось получить список TCP-портов или нет слушающих портов"
+  fi
+
+  echo
+  echo "4. Последние ошибки служб"
+  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u caddy -p err -n 8 --no-pager -o short-iso 2>/dev/null || true)"
+  if [[ -n "$log_output" ]]; then
+    printf '%s\n' "$log_output" | sed 's/^/  /'
+  else
+    echo "  [✓] Ошибок уровня error в доступном журнале не найдено"
+  fi
+
+  echo
+  echo "════════════════════════════════════════════════════════════"
+  if (( failed )); then
+    warn "Проверка завершена: обнаружены проблемы. Смотри строки [✗] выше."
+    echo "Подсказка: для подробного журнала выполни: journalctl -u ИМЯ_СЛУЖБЫ -n 50 --no-pager"
+  else
+    ok "Проверка завершена: службы и JSON-конфигурации в порядке."
+    echo "Если подключение не работает, проверь доступность указанных портов и правила firewall."
+  fi
 }
 backup_command() {
   local dest="${1:-/root/tproxy-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
