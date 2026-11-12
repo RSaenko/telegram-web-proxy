@@ -298,3 +298,25 @@ sudo ./tgweb-install.sh --help
 - [Caddy](https://caddyserver.com/) — HTTPS, TLS и reverse proxy.
 - [MTProxy](https://github.com/TelegramMessenger/MTProxy) — backend прокси.
 - [qrencode](https://github.com/fukuchi/libqrencode) — генерация QR-кодов.
+
+
+## Обслуживание и восстановление
+
+Скрипт поддерживает команды:
+
+```bash
+sudo ./tgweb-install.sh status
+sudo ./tgweb-install.sh diagnostics
+sudo ./tgweb-install.sh backup
+sudo ./tgweb-install.sh backup /root/tproxy-backup.tar.gz
+sudo ./tgweb-install.sh restore /root/tproxy-backup.tar.gz
+```
+
+- `status` показывает состояние служб и слушающие TCP-порты.
+- `diagnostics` выводит состояние служб, проверяет JSON-конфигурации и показывает последние журналы systemd.
+- `backup` архивирует конфигурации tproxy-server, MTProxy, Caddy и связанные systemd units. Архив создаётся с правами `0600`.
+- `restore` восстанавливает файлы из архива и выполняет `systemctl daemon-reload`. После восстановления проверь конфигурацию и состояние служб вручную.
+
+**Важно:** backup/restore сохраняет конфигурационные файлы, но не является автоматическим rollback обновления. Он не возвращает предыдущие бинарники, исходники upstream, пакеты или состояние firewall. Перед обновлением отдельно сохрани важные данные и проверь восстановление на тестовой машине.
+
+Существующий каталог сайта при повторной установке не должен автоматически переписываться или менять права. При удалении прокси каталог сайта сохраняется; удаляй его вручную после проверки содержимого, если он больше не нужен. Секреты и ссылки подключения не выводятся в стандартном отчёте.
