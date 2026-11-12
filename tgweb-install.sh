@@ -136,9 +136,33 @@ find_free_port() {
 
 # ----------------------------- интерфейс TUI --------------------------------
 UI_BLUE="" UI_CYAN="" UI_BOLD="" UI_DIM="" UI_RESET=""
-if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-  UI_BLUE=
-prompt_value() {
+if [[ -t 1 && -z "${NO_COLOR:-}" ]] && command -v tput >/dev/null 2>&1; then
+  UI_BLUE="$(tput bold; tput setaf 4)"
+  UI_CYAN="$(tput setaf 6)"
+  UI_BOLD="$(tput bold)"
+  UI_DIM="$(tput dim)"
+  UI_RESET="$(tput sgr0)"
+fi
+
+ui_header() {
+  local title="$1" subtitle="${2:-SERVER MANAGEMENT CONSOLE}"
+  echo
+  printf "%s╭────────────────────────────────────────────────────────────╮%s\n" "$UI_BLUE" "$UI_RESET"
+  printf "%s│%s  %s%-58s%s%s│%s\n" "$UI_BLUE" "$UI_RESET" "$UI_BOLD" "$title" "$UI_RESET" "$UI_BLUE" "$UI_RESET"
+  printf "%s│%s  %s%-58s%s%s│%s\n" "$UI_BLUE" "$UI_RESET" "$UI_DIM" "$subtitle" "$UI_RESET" "$UI_BLUE" "$UI_RESET"
+  printf "%s╰────────────────────────────────────────────────────────────╯%s\n" "$UI_BLUE" "$UI_RESET"
+}
+
+ui_section() {
+  printf "\n%s◆ %s%s\n" "$UI_BLUE" "$1" "$UI_RESET"
+  printf "%s────────────────────────────────────────────────────────────%s\n" "$UI_DIM" "$UI_RESET"
+}
+
+ui_item() {
+  local n="$1" label="$2" glyph="›"
+  case "$n" in 01) glyph="↓" ;; 02) glyph="↻" ;; 03) glyph="×" ;; 04) glyph="!" ;; 05) glyph="⚙" ;; 06) glyph="◇" ;; 07) glyph="↩" ;; esac
+  printf "  %s%s %s%-4s%s %s\n" "$UI_BLUE" "$glyph" "$UI_CYAN" "$n" "$UI_RESET" "$label"
+}prompt_value() {
   local __var="$1" label="$2" validator="$3"
   local input err
   while :; do
