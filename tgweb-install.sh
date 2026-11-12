@@ -947,7 +947,7 @@ validate_configs() {
     info "Валидация Nginx…"
     nginx -t || die "nginx -t упал"
   fi
-  printf "%s\\n" "$WEB_SERVER" > /etc/tproxy-server/web-server
+  printf "%s\n" "$WEB_SERVER" > /etc/tproxy-server/web-server
   chmod 0640 /etc/tproxy-server/web-server
   ok "Конфиги валидны"
 }
@@ -1423,7 +1423,6 @@ diagnostics_command() {
   [[ "$web_server" == "nginx" || "$web_server" == "caddy" ]] || { if systemctl is-enabled --quiet nginx 2>/dev/null; then web_server=nginx; else web_server=caddy; fi; }
   local -a services=("tproxy-server:Основной прокси (tproxy-server)" "mtproxy:Прокси MTProxy (mtproxy)" "tproxy-firewall:Сетевой экран (tproxy-firewall)" "refresh-mtproxy-config.timer:Таймер обновления конфигурации (refresh-mtproxy-config.timer)" "$web_server:Веб-сервер и HTTPS ($web_server)")
   local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
-  if [[ "$web_server" == "nginx" ]]; then configs+=(/etc/nginx/sites-available/tproxy-server); else configs+=(/etc/caddy/Caddyfile); fi
 
   echo
   echo "------------------------------------------------------------"
@@ -1464,6 +1463,7 @@ diagnostics_command() {
   echo
   echo "3. Проверка конфигурации веб-сервера"
   if [[ "$web_server" == "nginx" ]]; then
+    if [[ -r /etc/nginx/sites-available/tproxy-server ]]; then echo "  [✓] Конфигурация Nginx найдена"; else echo "  [✗] Конфигурация Nginx не найдена"; failed=1; fi
     if nginx -t 2>&1; then echo "  [✓] Nginx-конфигурация корректна"; else echo "  [✗] Ошибка конфигурации Nginx"; failed=1; fi
     if [[ -s "/etc/letsencrypt/live/$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null)/fullchain.pem" ]]; then
       echo "  [✓] TLS-сертификат Let's Encrypt найден"
