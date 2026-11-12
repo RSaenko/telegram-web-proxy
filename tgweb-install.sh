@@ -859,7 +859,7 @@ start_services() {
   systemctl enable tproxy-firewall.service 2>/dev/null || true
   systemctl enable mtproxy.service 2>/dev/null || true
   systemctl enable tproxy-server.service 2>/dev/null || true
-  systemctl enable refresh-mtproxy-config.timer 2>/dev/null || true
+  systemctl enable --now refresh-mtproxy-config.timer 2>/dev/null || true
   systemctl enable caddy.service 2>/dev/null || true
 
   systemctl is-active --quiet mtproxy || systemctl start mtproxy
