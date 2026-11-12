@@ -214,17 +214,14 @@ prompt_secret() {
 }
 
 interactive_fill() {
-  local need_host=0 need_email=0 need_port=0 need_admin=0
-  [[ -z "$HOSTNAME_ARG" ]] && need_host=1
-  [[ -z "$EMAIL_ARG"    ]] && need_email=1
-  [[ -z "$RELAY_PORT"   ]] && need_port=1
-  [[ -z "$ADMIN_PORT"   ]] && need_admin=1
-
+  local input err
   if [[ "$NONINTERACTIVE" == "1" ]]; then
-    [[ $need_host  -eq 0 ]] || die "--hostname обязателен в non-interactive"
-    [[ $need_email -eq 0 ]] || die "--email обязателен в non-interactive"
-    [[ $need_port  -eq 0 ]] || die "--port обязателен в non-interactive"
-    [[ $need_admin -eq 0 ]] || die "--admin-port обязателен в non-interactive"
+    [[ -n "$HOSTNAME_ARG" ]] || die "--hostname обязателен в non-interactive"
+    [[ -n "$EMAIL_ARG" ]] || die "--email обязателен в non-interactive"
+    [[ -n "$RELAY_PORT" ]] || die "--port обязателен в non-interactive"
+    [[ -n "$ADMIN_PORT" ]] || die "--admin-port обязателен в non-interactive"
+    WORKERS_ARG="${WORKERS_ARG:-1}"
+    MAXCONN_ARG="${MAXCONN_ARG:-4096}"
     if [[ -z "$SECRET_ARG" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd${SECRET_ARG}"
@@ -234,69 +231,73 @@ interactive_fill() {
   fi
 
   echo
-  echo "────────────────────────────────────────────"
-  echo "  Установка/обновление tproxy-server"
-  echo "────────────────────────────────────────────"
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Установка tproxy-server"
+  echo "  Обязательные параметры нужно заполнить; Enter у остальных"
+  echo "  оставляет значение по умолчанию."
+  echo "────────────────────────────────────────────────────────────"
 
-  if [[ $need_host -eq 1 ]]; then
-    echo
-    echo "Домен (A-запись уже должна указывать на сервер)"
-    prompt_value HOSTNAME_ARG "Hostname" validate_hostname
+  while :; do
+    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
+    if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
+    echo "  ⚠️  $err"
+  done
+
+  while :; do
+    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
+    if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
+    echo "  ⚠️  $err"
+  done
+
+  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  if [[ -n "$input" ]]; then
+    validate_base_path "$input" >/dev/null || die "Некорректный base path"
+    BASE_PATH_ARG="$input"
   fi
-  if [[ $need_email -eq 1 ]]; then
-    echo
-    echo "Email для Let's Encrypt"
-    prompt_value EMAIL_ARG "Email" validate_email
-  fi
-  if [[ $need_port -eq 1 ]]; then
-    echo
-    echo "Порт relay tproxy-server (внутренний, ≥1024). Caddy → этот порт."
-    prompt_port RELAY_PORT "Relay-порт" "$DEFAULT_PORT"
-  fi
-  if [[ $need_admin -eq 1 ]]; then
-    echo
-    echo "Admin-порт relay (healthz/readyz)"
-    prompt_port ADMIN_PORT "Admin-порт" "$DEFAULT_ADMIN_PORT"
-    [[ "$ADMIN_PORT" == "$RELAY_PORT" ]] && die "admin-порт совпадает с relay"
-  fi
+
+  echo
+  echo "Внутренний порт приложения — на нём tproxy-server принимает запросы"
+  echo "от локального веб-сервера. Обычно менять его не требуется."
+  prompt_port RELAY_PORT "Порт приложения" "${DEFAULT_PORT}"
+
+  echo
+  echo "Служебный порт для проверки состояния приложения (health check)."
+  prompt_port ADMIN_PORT "Порт проверки состояния" "${DEFAULT_ADMIN_PORT}"
+  [[ "$ADMIN_PORT" == "$RELAY_PORT" ]] && die "Порт проверки состояния совпадает с портом приложения"
+
   prompt_secret
 
-  if [[ -z "$WORKERS_ARG" ]]; then WORKERS_ARG=1; fi
-  if [[ -z "$MAXCONN_ARG" ]]; then MAXCONN_ARG=4096; fi
-  local tuning_input
+  WORKERS_ARG="${WORKERS_ARG:-1}"
+  MAXCONN_ARG="${MAXCONN_ARG:-4096}"
   while :; do
-    read -r -p "Количество MTProxy workers [$WORKERS_ARG]: " tuning_input || die "ввод прерван"
-    tuning_input="${tuning_input:-$WORKERS_ARG}"
-    if [[ "$tuning_input" =~ ^[1-9][0-9]*$ ]] && (( tuning_input <= 256 )); then
-      WORKERS_ARG="$tuning_input"
-      break
-    fi
-    echo "  ⚠️  Укажи целое число от 1 до 256"
+    read -r -p "Количество MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$WORKERS_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
+    echo "  ⚠️  workers должен быть числом от 1 до 256"
   done
   while :; do
-    read -r -p "MTProxy max-connections [$MAXCONN_ARG]: " tuning_input || die "ввод прерван"
-    tuning_input="${tuning_input:-$MAXCONN_ARG}"
-    if [[ "$tuning_input" =~ ^[1-9][0-9]*$ ]]; then
-      MAXCONN_ARG="$tuning_input"
-      break
-    fi
-    echo "  ⚠️  Укажи положительное целое число"
+    read -r -p "MTProxy max-connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$MAXCONN_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
+    echo "  ⚠️  max-connections должен быть положительным числом"
   done
 
   echo
-  echo "────────────────────────────────────────────"
-  echo "  Hostname   : $HOSTNAME_ARG"
-  echo "  Email      : $EMAIL_ARG"
-  echo "  Секрет     : ${SECRET_ARG:0:8}…${SECRET_ARG: -4}"
-  echo "  Relay-порт : $RELAY_PORT"
-  echo "  Admin-порт : $ADMIN_PORT"
-  echo "  Сайт       : $SITE_DIR ($([[ $INSTALL_SITE -eq 1 ]] && echo да || echo нет))"
-  [[ -n "$WORKERS_ARG" ]] && echo "  Workers    : $WORKERS_ARG"
-  [[ -n "$MAXCONN_ARG" ]] && echo "  Max conns  : $MAXCONN_ARG"
-  echo "────────────────────────────────────────────"
-  confirm "Начинаем?" || die "отменено"
+  echo "Итоговые параметры установки:"
+  echo "  Домен                    : $HOSTNAME_ARG"
+  echo "  Email                    : $EMAIL_ARG"
+  echo "  Base path                : ${BASE_PATH_ARG:-автоматически}"
+  echo "  Порт приложения          : $RELAY_PORT"
+  echo "  Порт проверки состояния  : $ADMIN_PORT"
+  echo "  Секрет                   : ${SECRET_ARG:0:8}…${SECRET_ARG: -4}"
+  echo "  Workers                  : $WORKERS_ARG"
+  echo "  Max connections          : $MAXCONN_ARG"
+  echo "  Каталог сайта            : $SITE_DIR"
+  echo "────────────────────────────────────────────────────────────"
+  confirm "Начать установку?" || die "установка отменена"
 }
-
 # ----------------------------- парсер флагов --------------------------------
 parse_install_args() {
   while [[ $# -gt 0 ]]; do
