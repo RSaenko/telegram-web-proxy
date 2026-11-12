@@ -908,7 +908,7 @@ print_summary() {
   fi
   local proxy_secret; proxy_secret="$(web_proxy_secret)"
   local proxy_link="https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret"
-  : # QR-код не создаётся автоматически, чтобы не раскрывать секрет в артефакте
+  : # QR-код не создаётся автоматически
   cat <<EOF
 
 ════════════════════════════════════════════════════════════════════
@@ -920,11 +920,11 @@ print_summary() {
  Relay-порт:      127.0.0.1:$RELAY_PORT
  Admin-порт:      127.0.0.1:$ADMIN_PORT
 
- Internal secret: [скрыт]
+ Internal secret: $SECRET_ARG
  Proxy server:    $client_address
- Proxy secret:    [скрыт]
- Proxy link:      [скрыта]
- QR image:        создаётся отдельно по запросу
+ Proxy secret:    $proxy_secret
+ Proxy link:      $proxy_link
+ QR image:        /etc/tproxy-server/proxy-qr.png
 
  Проверка:
    curl -fsS http://127.0.0.1:$ADMIN_PORT/healthz
@@ -999,7 +999,7 @@ MTProxy backend        : ${backend:-<не задан>}
 Workers                : ${workers:-<не задан>}
 Max connections        : ${maxconn:-<не задан>}
 NAT args               : ${nat:-<не задан>}
-Секрет клиента         : [скрыт]
+Секрет клиента         : ${secret:-<не задан>}
 Формат секрета         : $(if [[ "$secret" == dd* ]]; then echo "dd + 32 hex"; elif [[ -n "$secret" ]]; then echo "32 hex"; else echo "<не задан>"; fi)
 
 Слушающие TCP-порты:
@@ -1011,7 +1011,7 @@ $(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer ca
 done)
 
 Ссылки подключения:
-[ссылка скрыта; секрет не выводится]
+${link:-<не удалось сформировать: проверь config.json и profiles.json>}
 QR-код (PNG)          : ${link:+/etc/tproxy-server/proxy-qr.png}
 ==============================================================
 EOF
@@ -1023,7 +1023,7 @@ EOF
   else
     printf '%s\n' "$report"
   fi
-  : # QR и секреты не выводятся автоматически
+  : # QR-код не создаётся автоматически
 }
 
 load_existing_config() {
