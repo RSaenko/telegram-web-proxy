@@ -47,10 +47,10 @@ ASSUME_YES=0
 GO_BIN=""
 
 # ----------------------------- утилиты --------------------------------------
-die()  { echo "❌ $*" >&2; exit 1; }
-info() { echo "ℹ️  $*"; }
-ok()   { echo "✅ $*"; }
-warn() { echo "⚠️  $*" >&2; }
+die()  { echo "[ОШИБКА] $*" >&2; exit 1; }
+info() { echo "[ИНФО] $*"; }
+ok()   { echo "[OK] $*"; }
+warn() { echo "[ВНИМАНИЕ] $*" >&2; }
 
 usage() {
   cat <<'EOF'
@@ -66,7 +66,10 @@ Usage:
   --email EMAIL             Email для Let's Encrypt
   --secret SECRET           32 hex или dd + 32 hex
   --secret-prefix MODE       plain или dd (формат генерации)
-  config [--output PATH]     Показать текущие настройки и ссылки
+  config [--output PATH]     Показать текущие настройки (секреты скрыты)
+  status, diagnostics        Общая диагностика: службы, порты, конфигурации и ошибки
+  backup [ABSOLUTE_PATH]     Резервная копия конфигураций
+  restore ABSOLUTE_PATH      Восстановить конфигурации из архива
   --base-path SLUG|none     Базовый путь (default: генерируется)
   --site-dir PATH           Каталог сайта (default: /srv/tproxy-site)
   --no-site                 Не устанавливать сайт
@@ -77,7 +80,7 @@ Usage:
   --skip-tests              Не запускать go test
   --non-interactive, -y     Ничего не спрашивать
 EOF
-  exit 1
+  return 0
 }
 
 # ----------------------------- валидаторы -----------------------------------
@@ -210,17 +213,14 @@ prompt_secret() {
 }
 
 interactive_fill() {
-  local need_host=0 need_email=0 need_port=0 need_admin=0
-  [[ -z "$HOSTNAME_ARG" ]] && need_host=1
-  [[ -z "$EMAIL_ARG"    ]] && need_email=1
-  [[ -z "$RELAY_PORT"   ]] && need_port=1
-  [[ -z "$ADMIN_PORT"   ]] && need_admin=1
-
+  local input err
   if [[ "$NONINTERACTIVE" == "1" ]]; then
-    [[ $need_host  -eq 0 ]] || die "--hostname обязателен в non-interactive"
-    [[ $need_email -eq 0 ]] || die "--email обязателен в non-interactive"
-    [[ $need_port  -eq 0 ]] || die "--port обязателен в non-interactive"
-    [[ $need_admin -eq 0 ]] || die "--admin-port обязателен в non-interactive"
+    [[ -n "$HOSTNAME_ARG" ]] || die "--hostname обязателен в non-interactive"
+    [[ -n "$EMAIL_ARG" ]] || die "--email обязателен в non-interactive"
+    [[ -n "$RELAY_PORT" ]] || die "--port обязателен в non-interactive"
+    [[ -n "$ADMIN_PORT" ]] || die "--admin-port обязателен в non-interactive"
+    WORKERS_ARG="${WORKERS_ARG:-1}"
+    MAXCONN_ARG="${MAXCONN_ARG:-4096}"
     if [[ -z "$SECRET_ARG" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd${SECRET_ARG}"
@@ -230,47 +230,73 @@ interactive_fill() {
   fi
 
   echo
-  echo "────────────────────────────────────────────"
-  echo "  Установка/обновление tproxy-server"
-  echo "────────────────────────────────────────────"
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Установка tproxy-server"
+  echo "  Обязательные параметры нужно заполнить; Enter у остальных"
+  echo "  оставляет значение по умолчанию."
+  echo "────────────────────────────────────────────────────────────"
 
-  if [[ $need_host -eq 1 ]]; then
-    echo
-    echo "Домен (A-запись уже должна указывать на сервер)"
-    prompt_value HOSTNAME_ARG "Hostname" validate_hostname
+  while :; do
+    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
+    if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
+    echo "  ⚠️  $err"
+  done
+
+  while :; do
+    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
+    if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
+    echo "  ⚠️  $err"
+  done
+
+  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  if [[ -n "$input" ]]; then
+    validate_base_path "$input" >/dev/null || die "Некорректный base path"
+    BASE_PATH_ARG="$input"
   fi
-  if [[ $need_email -eq 1 ]]; then
-    echo
-    echo "Email для Let's Encrypt"
-    prompt_value EMAIL_ARG "Email" validate_email
-  fi
-  if [[ $need_port -eq 1 ]]; then
-    echo
-    echo "Порт relay tproxy-server (внутренний, ≥1024). Caddy → этот порт."
-    prompt_port RELAY_PORT "Relay-порт" "$DEFAULT_PORT"
-  fi
-  if [[ $need_admin -eq 1 ]]; then
-    echo
-    echo "Admin-порт relay (healthz/readyz)"
-    prompt_port ADMIN_PORT "Admin-порт" "$DEFAULT_ADMIN_PORT"
-    [[ "$ADMIN_PORT" == "$RELAY_PORT" ]] && die "admin-порт совпадает с relay"
-  fi
-  prompt_secret
 
   echo
-  echo "────────────────────────────────────────────"
-  echo "  Hostname   : $HOSTNAME_ARG"
-  echo "  Email      : $EMAIL_ARG"
-  echo "  Секрет     : ${SECRET_ARG:0:8}…${SECRET_ARG: -4}"
-  echo "  Relay-порт : $RELAY_PORT"
-  echo "  Admin-порт : $ADMIN_PORT"
-  echo "  Сайт       : $SITE_DIR ($([[ $INSTALL_SITE -eq 1 ]] && echo да || echo нет))"
-  [[ -n "$WORKERS_ARG" ]] && echo "  Workers    : $WORKERS_ARG"
-  [[ -n "$MAXCONN_ARG" ]] && echo "  Max conns  : $MAXCONN_ARG"
-  echo "────────────────────────────────────────────"
-  confirm "Начинаем?" || die "отменено"
-}
+  echo "Внутренний порт приложения — на нём tproxy-server принимает запросы"
+  echo "от локального веб-сервера. Обычно менять его не требуется."
+  prompt_port RELAY_PORT "Порт приложения" "${DEFAULT_PORT}"
 
+  echo
+  echo "Служебный порт для проверки состояния приложения (health check)."
+  prompt_port ADMIN_PORT "Порт проверки состояния" "${DEFAULT_ADMIN_PORT}"
+  [[ "$ADMIN_PORT" == "$RELAY_PORT" ]] && die "Порт проверки состояния совпадает с портом приложения"
+
+  prompt_secret
+
+  WORKERS_ARG="${WORKERS_ARG:-1}"
+  MAXCONN_ARG="${MAXCONN_ARG:-4096}"
+  while :; do
+    read -r -p "Количество MTProxy workers [$WORKERS_ARG]: " input || die "ввод прерван"
+    input="${input:-$WORKERS_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
+    echo "  ⚠️  workers должен быть числом от 1 до 256"
+  done
+  while :; do
+    read -r -p "MTProxy max-connections [$MAXCONN_ARG]: " input || die "ввод прерван"
+    input="${input:-$MAXCONN_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
+    echo "  ⚠️  max-connections должен быть положительным числом"
+  done
+
+  echo
+  echo "Итоговые параметры установки:"
+  echo "  Домен                    : $HOSTNAME_ARG"
+  echo "  Email                    : $EMAIL_ARG"
+  echo "  Base path                : ${BASE_PATH_ARG:-автоматически}"
+  echo "  Порт приложения          : $RELAY_PORT"
+  echo "  Порт проверки состояния  : $ADMIN_PORT"
+  echo "  Секрет                   : ${SECRET_ARG:0:8}…${SECRET_ARG: -4}"
+  echo "  Workers                  : $WORKERS_ARG"
+  echo "  Max connections          : $MAXCONN_ARG"
+  echo "  Каталог сайта            : $SITE_DIR"
+  echo "────────────────────────────────────────────────────────────"
+  confirm "Начать установку?" || die "установка отменена"
+}
 # ----------------------------- парсер флагов --------------------------------
 parse_install_args() {
   while [[ $# -gt 0 ]]; do
@@ -485,10 +511,10 @@ install_stub_site() {
   if [[ "$INSTALL_SITE" -ne 1 ]]; then info "Сайт пропущен (--no-site)"; return 0; fi
   if [[ -f "$SITE_DIR/index.html" ]]; then
     info "Сайт уже есть в $SITE_DIR — не трогаю"
-    chown -R root:root "$SITE_DIR"
-    find "$SITE_DIR" -type d -exec chmod 0755 {} +
-    find "$SITE_DIR" -type f -exec chmod 0644 {} +
-    ok "Права на $SITE_DIR приведены к 755/644"
+    : # Существующий сайт и его права не изменяем
+    : # Не меняем права пользовательского содержимого
+
+    ok "Существующий сайт сохранён без изменений"
     return 0
   fi
   info "Ставлю сайт-заглушку в $SITE_DIR…"
@@ -668,10 +694,10 @@ CSS
 </svg>
 SVG
 
-  chown -R root:root "$SITE_DIR"
-  find "$SITE_DIR" -type d -exec chmod 0755 {} +
-  find "$SITE_DIR" -type f -exec chmod 0644 {} +
-  ok "Сайт-заглушка установлен в $SITE_DIR (права 755/644)"
+  chown root:root "$SITE_DIR" "$SITE_DIR/index.html"
+  chmod 0755 "$SITE_DIR"
+  chmod 0644 "$SITE_DIR/index.html"
+  ok "Сайт-заглушка установлен в $SITE_DIR"
 }
 
 ensure_tproxy_user() {
@@ -690,7 +716,7 @@ write_configs() {
   "base_path": "$BASE_PATH_ARG",
   "listen": "127.0.0.1:$RELAY_PORT",
   "admin_listen": "127.0.0.1:$ADMIN_PORT",
-  "public_dir": "/srv/tproxy-site",
+  "public_dir": "$SITE_DIR",
   "static_routes": "exact",
   "profiles_file": "/run/credentials/tproxy-server.service/profiles.json"
 }
@@ -790,7 +816,7 @@ install_caddyfile() {
   cat > /etc/systemd/system/caddy.service.d/tproxy.conf <<EOF
 [Service]
 Environment=TPROXY_HOSTNAME=$HOSTNAME_ARG
-Environment=TPROXY_SITE_ROOT=/srv/tproxy-site
+Environment=TPROXY_SITE_ROOT=$SITE_DIR
 Environment=ACME_EMAIL=$EMAIL_ARG
 EOF
   ok "caddy.service + drop-in установлены"
@@ -806,10 +832,10 @@ verify_site_permissions() {
     fi
   done < <(find "$SITE_DIR" -type f -print0)
   if [[ $unreadable -eq 1 ]]; then
-    warn "Исправляю права…"
-    find "$SITE_DIR" -type d -exec chmod 0755 {} +
-    find "$SITE_DIR" -type f -exec chmod 0644 {} +
-    chown -R root:root "$SITE_DIR"
+    die "tproxy не может читать сайт. Исправь права вручную; установщик не меняет права существующего сайта."
+    :
+    :
+    :
   fi
   ok "Права на сайт в порядке"
 }
@@ -821,7 +847,7 @@ validate_configs() {
     -profiles-file /etc/tproxy-server/profiles.json -check \
     || die "tproxy-server -check упал"
   info "Валидация Caddyfile…"
-  TPROXY_HOSTNAME="$HOSTNAME_ARG" TPROXY_SITE_ROOT=/srv/tproxy-site ACME_EMAIL="$EMAIL_ARG" \
+  TPROXY_HOSTNAME="$HOSTNAME_ARG" TPROXY_SITE_ROOT="$SITE_DIR" ACME_EMAIL="$EMAIL_ARG" \
     /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
     || die "caddy validate упал"
   ok "Конфиги валидны"
@@ -832,7 +858,7 @@ start_services() {
   systemctl enable tproxy-firewall.service 2>/dev/null || true
   systemctl enable mtproxy.service 2>/dev/null || true
   systemctl enable tproxy-server.service 2>/dev/null || true
-  systemctl enable refresh-mtproxy-config.timer 2>/dev/null || true
+  systemctl enable --now refresh-mtproxy-config.timer 2>/dev/null || true
   systemctl enable caddy.service 2>/dev/null || true
 
   systemctl is-active --quiet mtproxy || systemctl start mtproxy
@@ -907,9 +933,9 @@ print_summary() {
   generate_proxy_qr "$proxy_link"
   cat <<EOF
 
-════════════════════════════════════════════════════════════════════
-🎉  tproxy-server развёрнут
-════════════════════════════════════════════════════════════════════
+--------------------------------------------------------------------
+tproxy-server развёрнут
+--------------------------------------------------------------------
  Хостнейм:        $HOSTNAME_ARG
  Base path:       ${BASE_PATH_ARG:-<root>}
  Сайт:            https://$HOSTNAME_ARG/
@@ -928,19 +954,19 @@ print_summary() {
    curl -fsS https://$HOSTNAME_ARG/
 
  Firewall — разрешить входящие TCP:
-   • 80/tcp  — HTTP (редирект и ACME/Let's Encrypt)
-   • 443/tcp — HTTPS (сайт и Web Proxy)
+   - 80/tcp  — HTTP (редирект и ACME/Let's Encrypt)
+   - 443/tcp — HTTPS (сайт и Web Proxy)
 
  Не открывать наружу:
-   • $RELAY_PORT/tcp — relay слушает только 127.0.0.1
-   • $ADMIN_PORT/tcp — admin/health слушает только 127.0.0.1
-   • 2398/tcp и 8888/tcp — внутренние порты MTProxy,
+   - $RELAY_PORT/tcp — relay слушает только 127.0.0.1
+   - $ADMIN_PORT/tcp — admin/health слушает только 127.0.0.1
+   - 2398/tcp и 8888/tcp — внутренние порты MTProxy,
      блокируются локальным firewall tproxy_backend.
 
  Правило относится и к firewall сервера, и к firewall
  провайдера/VPS (Security Group). UDP для этой конфигурации
  открывать не требуется.
-════════════════════════════════════════════════════════════════════
+--------------------------------------------------------------------
 EOF
   print_proxy_qr_terminal "$proxy_link"
 }
@@ -1019,7 +1045,7 @@ EOF
   else
     printf '%s\n' "$report"
   fi
-  [[ -n "$link" ]] && print_proxy_qr_terminal "$link"
+  if [[ -n "$link" ]]; then print_proxy_qr_terminal "$link"; fi
 }
 
 load_existing_config() {
@@ -1140,10 +1166,48 @@ interactive_update_fill() {
   confirm "Применить обновление?" || die "обновление отменено"
 }
 
+
+show_operation_overview() {
+  echo
+  echo "--------------------------------------------------------------------"
+  if [[ "$MODE" == "update" ]]; then
+    echo "  ПЕРЕД ОБНОВЛЕНИЕМ"
+    cat <<'EOF'
+  Будут обновлены исходники и компоненты, пересобран tproxy-server,
+  обновлены конфигурации и перезапущены службы.
+  Текущие настройки будут предложены по умолчанию, каталог сайта сохранится.
+EOF
+  else
+    echo "  ПЕРЕД УСТАНОВКОЙ"
+    cat <<'EOF'
+  Будут установлены зависимости и Caddy, собраны tproxy-server и MTProxy,
+  созданы конфигурации и службы, настроен HTTPS и запущены сервисы.
+  Домен должен указывать на IP этого сервера.
+EOF
+  fi
+  cat <<'EOF'
+
+  ПОРТЫ
+  - 80/tcp и 443/tcp — публичные HTTP/HTTPS; должны быть доступны извне.
+    При установке их не должен занимать другой веб-сервер; при обновлении
+    их может занимать Caddy.
+  - 8080/tcp и 8081/tcp — внутренние порты приложения (127.0.0.1).
+    При установке должны быть свободны; при смене портов при обновлении
+    свободными должны быть новые значения. Не открывать в интернет.
+  - 2398/tcp и 8888/tcp — внутренние порты MTProxy, закрыты firewall.
+
+  В firewall VPS разреши входящие TCP 80 и 443. UDP не требуется.
+  Нужен root-доступ; службы могут быть перезапущены.
+EOF
+  echo "--------------------------------------------------------------------"
+  echo
+}
+
 run_install() {
   require_root
   check_arch
   check_os
+  show_operation_overview
   if [[ "$MODE" == "update" ]]; then
     interactive_update_fill
   else
@@ -1175,19 +1239,19 @@ run_install() {
 
 run_uninstall() {
   require_root
-  echo "════════════════════════════════════════════════════════════"
+  echo "------------------------------------------------------------"
   echo "  Удаление tproxy-server"
-  echo "════════════════════════════════════════════════════════════"
+  echo "------------------------------------------------------------"
   echo "Будет удалено:"
-  echo "  • сервисы: tproxy-server, mtproxy, tproxy-firewall, refresh-mtproxy-config"
-  echo "  • каталоги: $REPO_DIR, /etc/tproxy-server, /etc/mtproxy, /srv/tproxy-site"
-  echo "  • бинарники: /usr/local/bin/tproxy-server, /usr/local/bin/mtproxy"
-  echo "  • nftables: inet tproxy_backend"
-  echo "  • пользователи: tproxy, mtproxy"
+  echo "  - сервисы: tproxy-server, mtproxy, tproxy-firewall, refresh-mtproxy-config"
+  echo "  - каталоги: $REPO_DIR, /etc/tproxy-server, /etc/mtproxy; сайт $SITE_DIR сохраняется"
+  echo "  - бинарники: /usr/local/bin/tproxy-server, /usr/local/bin/mtproxy"
+  echo "  - nftables: inet tproxy_backend"
+  echo "  - пользователи: tproxy, mtproxy"
   if [[ $KEEP_CADDY -eq 0 ]]; then
-    echo "  • Caddy: будет спрошено отдельно"
+    echo "  - Caddy: будет спрошено отдельно"
   else
-    echo "  • Caddy: НЕ будет удалён (--keep-caddy)"
+    echo "  - Caddy: НЕ будет удалён (--keep-caddy)"
   fi
   echo
   confirm "Продолжить?" || die "отменено"
@@ -1208,7 +1272,8 @@ run_uninstall() {
 
   nft delete table inet tproxy_backend 2>/dev/null || true
 
-  rm -rf "$REPO_DIR" /etc/tproxy-server /etc/mtproxy /srv/tproxy-site
+  rm -rf "$REPO_DIR" /etc/tproxy-server /etc/mtproxy
+  info "Каталог сайта $SITE_DIR сохранён."
   rm -f /usr/local/bin/tproxy-server /usr/local/bin/mtproxy
   rm -f /usr/local/sbin/refresh-mtproxy-config
 
@@ -1233,9 +1298,9 @@ run_uninstall() {
 run_purge() {
   run_uninstall
   echo
-  echo "════════════════════════════════════════════════════════════"
+  echo "------------------------------------------------------------"
   echo "  Удаление пакетов"
-  echo "════════════════════════════════════════════════════════════"
+  echo "------------------------------------------------------------"
   warn "Будут удалены: ${PURGE_PACKAGES[*]}"
   warn "Эти пакеты могут использоваться другими сервисами (Docker, firewall, git-репозитории)."
   confirm "Продолжить?" || die "отменено"
@@ -1250,27 +1315,158 @@ run_purge() {
 #  МЕНЮ
 # ============================================================================
 
+diagnostics_command() {
+  local failed=0 svc state file port_output log_output
+  local -a services=("tproxy-server:Основной прокси (tproxy-server)" "mtproxy:Прокси MTProxy (mtproxy)" "tproxy-firewall:Сетевой экран (tproxy-firewall)" "refresh-mtproxy-config.timer:Таймер обновления конфигурации (refresh-mtproxy-config.timer)" "caddy:Веб-сервер и HTTPS (caddy)")
+  local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
+
+  echo
+  echo "------------------------------------------------------------"
+  echo "  ДИАГНОСТИКА СЕРВЕРА"
+  echo "------------------------------------------------------------"
+
+  echo
+  echo "1. Состояние служб"
+  for svc in "${services[@]}"; do
+    local unit="${svc%%:*}" label="${svc#*:}"
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    if [[ "$state" == "active" ]]; then
+      printf "  [✓] %-14s %s\n" "работает" "$label"
+    else
+      printf "  [✗] %-14s %s\n" "${state:-неизвестно}" "$label"
+      failed=1
+    fi
+  done
+
+  echo
+  echo "2. Файлы конфигурации"
+  for file in "${configs[@]}"; do
+    if [[ ! -f "$file" ]]; then
+      printf "  [✗] %s — файл не найден\n" "$file"
+      failed=1
+    elif [[ ! -r "$file" ]]; then
+      printf "  [✗] %s — нет прав на чтение\n" "$file"
+      failed=1
+    elif jq empty "$file" >/dev/null 2>&1; then
+      printf "  [✓] %s — JSON корректен\n" "$file"
+      stat -c '      Права: %a, владелец: %U:%G' "$file" 2>/dev/null || true
+    else
+      printf "  [✗] %s — ошибка в JSON\n" "$file"
+      failed=1
+    fi
+  done
+
+  echo
+  echo "3. Слушающие TCP-порты"
+  port_output="$(ss -lntp 2>/dev/null || true)"
+  if [[ -n "$port_output" ]]; then
+    printf '%s\n' "$port_output" | sed 's/^/  /'
+  else
+    echo "  [!] Не удалось получить список TCP-портов или нет слушающих портов"
+  fi
+
+  echo
+  echo "4. Последние ошибки служб"
+  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u caddy -p err -n 8 --no-pager -o short-iso 2>/dev/null || true)"
+  if [[ -n "$log_output" ]]; then
+    printf '%s\n' "$log_output" | sed 's/^/  /'
+  else
+    echo "  [✓] Ошибок уровня error в доступном журнале не найдено"
+  fi
+
+  echo
+  echo "------------------------------------------------------------"
+  if (( failed )); then
+    warn "Проверка завершена: обнаружены проблемы. Смотри строки [✗] выше."
+    echo "Подсказка: для подробного журнала выполни: journalctl -u ИМЯ_СЛУЖБЫ -n 50 --no-pager"
+  else
+    ok "Проверка завершена: службы и JSON-конфигурации в порядке."
+    echo "Если подключение не работает, проверь доступность указанных портов и правила firewall."
+  fi
+}
+backup_command() {
+  local dest="${1:-/root/tproxy-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
+  [[ "$dest" = /* ]] || die "Путь backup должен быть абсолютным"
+  install -d -m 0700 "$(dirname "$dest")"
+  local items=()
+  for p in etc/tproxy-server etc/mtproxy etc/caddy/Caddyfile etc/caddy/Caddyfile.d etc/systemd/system/tproxy-server.service etc/systemd/system/mtproxy.service etc/systemd/system/tproxy-firewall.service etc/systemd/system/refresh-mtproxy-config.service etc/systemd/system/refresh-mtproxy-config.timer etc/systemd/system/caddy.service.d/tproxy.conf; do
+    [[ ! -e "/$p" ]] || items+=("$p")
+  done
+  (("${#items[@]}")) || die "Нет файлов конфигурации для резервирования"
+  tar -C / -czpf "$dest" "${items[@]}"
+  chmod 0600 "$dest"; ok "Резервная копия создана: $dest (0600)"
+}
+restore_command() {
+  local archive="${1:-}"
+  [[ -n "$archive" && -f "$archive" ]] || die "Укажи существующий архив: restore /absolute/path/backup.tar.gz"
+  [[ "$archive" = /* ]] || die "Путь к архиву должен быть абсолютным"
+  local entry
+  while IFS= read -r entry; do
+    [[ "$entry" != /* && "$entry" != *".."* ]] || die "Небезопасный путь в архиве: $entry"
+  done < <(tar -tzf "$archive")
+  confirm "Восстановить конфигурации из $archive? Текущие файлы будут перезаписаны." || die "восстановление отменено"
+  tar -C / -xzpf "$archive"; systemctl daemon-reload
+  ok "Конфигурации восстановлены. Проверь их и перезапусти службы вручную."
+}
+show_tools_menu() {
+  local choice archive
+  while true; do
+    echo
+    echo "------------------------------------------------------------"
+    echo "  Инструменты"
+    echo "------------------------------------------------------------"
+    echo "  1) Диагностика (службы, порты, конфигурации и ошибки)"
+    echo "  2) Создать резервную копию"
+    echo "  3) Восстановить резервную копию"
+    echo "  4) Назад"
+    echo
+    read -r -p "Выбор [1-4]: " choice
+    case "$choice" in
+      1)
+        require_root
+        diagnostics_command
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      2)
+        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        require_root
+        if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      3)
+        read -e -r -p "Абсолютный путь к архиву: " archive
+        [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
+        require_root
+        restore_command "$archive"
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      4) return 0 ;;
+    esac
+  done
+}
 show_menu() {
   echo
-  echo "════════════════════════════════════════════════════════════"
+  echo "------------------------------------------------------------"
   echo "  tproxy-manager — что делаем?"
-  echo "════════════════════════════════════════════════════════════"
+  echo "------------------------------------------------------------"
   echo "  1) Установить tproxy-server"
   echo "  2) Обновить (без пересоздания существующих сервисов)"
   echo "  3) Удалить tproxy-server (Caddy оставить)"
   echo "  4) Удалить всё, включая пакеты"
   echo "  5) Просмотреть текущую конфигурацию"
-  echo "  6) Выход"
+  echo "  6) Инструменты"
+  echo "  7) Выход"
   echo
   local choice
-  read -r -p "Выбор [1-6]: " choice
+  read -r -p "Выбор [1-7]: " choice
   case "$choice" in
     1) MODE=install ;;
     2) MODE=update; SKIP_TESTS=1 ;;
     3) MODE=uninstall; KEEP_CADDY=1 ;;
     4) MODE=purge ;;
     5) MODE=config ;;
-    6) exit 0 ;;
+    6) MODE=tools ;;
+    7) exit 0 ;;
     *) die "Неверный выбор" ;;
   esac
 }
@@ -1281,26 +1477,50 @@ show_menu() {
 
 main() {
   if [[ $# -eq 0 ]]; then
-    show_menu
-  else
-    MODE="$1"; shift
-    case "$MODE" in
-      install)   parse_install_args "$@" ;;
-      update)    SKIP_TESTS=1; parse_install_args "$@" ;;
-      uninstall) parse_uninstall_args "$@" ;;
-      purge)     parse_uninstall_args "$@" ;;
-      config)    : ;;
-      -h|--help|help) usage ;;
-      *) die "Unknown mode: $MODE (install|update|uninstall|purge|config)" ;;
-    esac
+    while true; do
+      MODE=""
+      show_menu
+      case "$MODE" in
+        tools)
+          show_tools_menu
+          ;;
+        config)
+          require_root
+          run_config
+          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          ;;
+        install)
+          run_install
+          return 0
+          ;;
+        update)
+          run_install
+          return 0
+          ;;
+        uninstall)
+          run_uninstall
+          return 0
+          ;;
+        purge)
+          run_purge
+          return 0
+          ;;
+      esac
+    done
   fi
 
+  MODE="$1"; shift
   case "$MODE" in
-    install)   run_install ;;
-    update)    run_install ;;
-    uninstall) run_uninstall ;;
-    purge)     run_purge ;;
+    install)   parse_install_args "$@"; run_install ;;
+    update)    SKIP_TESTS=1; parse_install_args "$@"; run_install ;;
+    uninstall) parse_uninstall_args "$@"; run_uninstall ;;
+    purge)     parse_uninstall_args "$@"; run_purge ;;
     config)    require_root; run_config "$@" ;;
+    status|diagnostics) require_root; diagnostics_command ;;
+    backup)    require_root; backup_command "$@" ;;
+    restore)   require_root; restore_command "$@" ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) die "Unknown mode: $MODE (install|update|uninstall|purge|config|status|diagnostics|backup|restore)" ;;
   esac
 }
 
