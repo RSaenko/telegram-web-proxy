@@ -525,6 +525,12 @@ server {
 EOF
   nginx -t || die "Nginx-конфигурация невалидна"
   systemctl enable nginx.service
+  install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx <<EOF
+#!/usr/bin/env bash
+systemctl reload nginx.service
+EOF
+  chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx
   systemctl enable --now certbot.timer 2>/dev/null || true
   ok "Nginx настроен"
 }
@@ -540,8 +546,9 @@ remove_caddy() {
 remove_nginx() {
   systemctl stop nginx.service 2>/dev/null || true
   systemctl disable nginx.service 2>/dev/null || true
-  rm -f "$NGINX_ENABLED" "$NGINX_SITE"
+  rm -f "$NGINX_ENABLED" "$NGINX_SITE" /etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx
   systemctl daemon-reload
+  apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
 }
 
 install_mtproxy_backend() {
@@ -1310,7 +1317,15 @@ run_install() {
   fetch_repo
   resolve_base_path
   ensure_tproxy_user
-  if [[ "$WEB_SERVER" == "caddy" ]]; then remove_nginx; install_caddy; else remove_caddy; install_nginx_packages; fi
+  local previous_web_server=""
+  previous_web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  if [[ "$WEB_SERVER" == "caddy" ]]; then
+    [[ "$previous_web_server" != "nginx" ]] || remove_nginx
+    install_caddy
+  else
+    [[ "$previous_web_server" != "caddy" ]] || remove_caddy
+    install_nginx_packages
+  fi
   install_mtproxy_backend
   ensure_go
   build_tproxy
@@ -1331,6 +1346,8 @@ run_install() {
 
 run_uninstall() {
   require_root
+  local installed_web_server
+  installed_web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
   echo "------------------------------------------------------------"
   echo "  Удаление tproxy-server"
   echo "------------------------------------------------------------"
@@ -1369,7 +1386,9 @@ run_uninstall() {
   userdel -r tproxy 2>/dev/null || true
   userdel -r mtproxy 2>/dev/null || true
 
-  if [[ $KEEP_WEB_SERVER -eq 0 ]] && confirm "Удалить Caddy и/или Nginx?"; then remove_caddy; remove_nginx; fi
+  if [[ $KEEP_WEB_SERVER -eq 0 ]] && confirm "Удалить веб-сервер ${installed_web_server:-Caddy/Nginx}?"; then
+    case "$installed_web_server" in caddy) remove_caddy ;; nginx) remove_nginx ;; *) warn "Не удалось определить установленный веб-сервер; веб-серверы не затронуты" ;; esac
+  fi
 
   ok "Удаление завершено"
 }
