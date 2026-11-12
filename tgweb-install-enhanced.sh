@@ -893,6 +893,7 @@ print_proxy_qr_terminal() {
   echo
   echo "QR-код для подключения (отсканируй камерой телефона):"
   qrencode -t ANSIUTF8 -m 2 "$link"
+  echo "PNG-файл QR-кода сохранён: /etc/tproxy-server/proxy-qr.png"
   echo
 }
 
