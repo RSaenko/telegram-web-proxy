@@ -24,6 +24,7 @@ readonly CADDY_VERSION="2.11.4"
 readonly CADDY_SHA512="8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9"
 readonly NGINX_SITE="/etc/nginx/sites-available/tproxy-server"
 readonly NGINX_ENABLED="/etc/nginx/sites-enabled/tproxy-server"
+readonly NGINX_MAP="/etc/nginx/conf.d/tproxy-websocket-map.conf"
 readonly ACME_WEBROOT="/var/www/letsencrypt"
 readonly DEFAULT_PORT=8080
 readonly DEFAULT_ADMIN_PORT=8081
@@ -492,6 +493,14 @@ server {
  location / { return 301 https://\$host\$request_uri; }
 }
 EOF
+  # Nginx needs explicit WebSocket upgrade handling and disabled buffering
+  # for the relay's long-lived streaming/long-poll HTTP connections.
+  cat > "$NGINX_MAP" <<'EOF'
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      '';
+}
+EOF
   ln -sfn "$NGINX_SITE" "$NGINX_ENABLED"
   rm -f /etc/nginx/sites-enabled/default
   nginx -t || die "Nginx HTTP-конфигурация невалидна"
@@ -515,11 +524,19 @@ server {
  ssl_protocols TLSv1.2 TLSv1.3;
  location / {
   proxy_pass http://127.0.0.1:$RELAY_PORT;
+  proxy_http_version 1.1;
   proxy_set_header Host \$host;
   proxy_set_header X-Real-IP \$remote_addr;
-  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-For \$remote_addr;
   proxy_set_header X-Forwarded-Proto https;
-  proxy_read_timeout 300s;
+  proxy_set_header X-Forwarded-Host \$host;
+  proxy_set_header Upgrade \$http_upgrade;
+  proxy_set_header Connection \$connection_upgrade;
+  proxy_buffering off;
+  proxy_request_buffering off;
+  proxy_cache off;
+  proxy_read_timeout 3600s;
+  proxy_send_timeout 3600s;
  }
 }
 EOF
@@ -552,7 +569,7 @@ remove_caddy() {
 remove_nginx() {
   systemctl stop nginx.service 2>/dev/null || true
   systemctl disable nginx.service 2>/dev/null || true
-  rm -f "$NGINX_ENABLED" "$NGINX_SITE" /etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx
+  rm -f "$NGINX_ENABLED" "$NGINX_SITE" "$NGINX_MAP" /etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx
   systemctl daemon-reload
   apt-get remove -y nginx nginx-common nginx-core 2>/dev/null || true
 }
