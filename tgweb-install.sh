@@ -940,10 +940,15 @@ validate_configs() {
   /usr/local/bin/tproxy-server -config /etc/tproxy-server/config.json \
     -profiles-file /etc/tproxy-server/profiles.json -check \
     || die "tproxy-server -check упал"
-  info "Валидация Caddyfile…"
-  TPROXY_HOSTNAME="$HOSTNAME_ARG" TPROXY_SITE_ROOT="$SITE_DIR" ACME_EMAIL="$EMAIL_ARG" \
-    /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
-    || die "caddy validate упал"
+  if [[ "$WEB_SERVER" == "caddy" ]]; then
+    info "Валидация Caddyfile…"
+    TPROXY_HOSTNAME="$HOSTNAME_ARG" TPROXY_SITE_ROOT="$SITE_DIR" ACME_EMAIL="$EMAIL_ARG" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile || die "caddy validate упал"
+  else
+    info "Валидация Nginx…"
+    nginx -t || die "nginx -t упал"
+  fi
+  printf "%s\\n" "$WEB_SERVER" > /etc/tproxy-server/web-server
+  chmod 0640 /etc/tproxy-server/web-server
   ok "Конфиги валидны"
 }
 
@@ -1490,7 +1495,7 @@ backup_command() {
   [[ "$dest" = /* ]] || die "Путь backup должен быть абсолютным"
   install -d -m 0700 "$(dirname "$dest")"
   local items=()
-  for p in etc/tproxy-server etc/mtproxy etc/caddy/Caddyfile etc/caddy/Caddyfile.d etc/systemd/system/tproxy-server.service etc/systemd/system/mtproxy.service etc/systemd/system/tproxy-firewall.service etc/systemd/system/refresh-mtproxy-config.service etc/systemd/system/refresh-mtproxy-config.timer etc/systemd/system/caddy.service.d/tproxy.conf; do
+  for p in etc/tproxy-server etc/mtproxy etc/caddy/Caddyfile etc/caddy/Caddyfile.d etc/nginx/sites-available/tproxy-server etc/letsencrypt etc/systemd/system/tproxy-server.service etc/systemd/system/mtproxy.service etc/systemd/system/tproxy-firewall.service etc/systemd/system/refresh-mtproxy-config.service etc/systemd/system/refresh-mtproxy-config.timer etc/systemd/system/caddy.service.d/tproxy.conf; do
     [[ ! -e "/$p" ]] || items+=("$p")
   done
   (("${#items[@]}")) || die "Нет файлов конфигурации для резервирования"
