@@ -22,12 +22,18 @@ readonly GO_FALLBACK_VERSION="1.26.5"
 readonly GO_FALLBACK_SHA256="5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
 readonly CADDY_VERSION="2.11.4"
 readonly CADDY_SHA512="8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9"
+readonly NGINX_SITE="/etc/nginx/sites-available/tproxy-server"
+readonly NGINX_ENABLED="/etc/nginx/sites-enabled/tproxy-server"
+readonly ACME_WEBROOT="/var/www/letsencrypt"
 readonly DEFAULT_PORT=8080
 readonly DEFAULT_ADMIN_PORT=8081
 readonly PURGE_PACKAGES=(nftables git jq netcat-openbsd dnsutils build-essential qrencode)
 
 # ----------------------------- переменные -----------------------------------
 MODE=""
+WEB_SERVER="caddy"
+WEB_SERVER_SET=0
+KEEP_WEB_SERVER=0
 HOSTNAME_ARG=""
 EMAIL_ARG=""
 SECRET_ARG=""
@@ -63,6 +69,7 @@ Usage:
 
 Опции установки/обновления:
   --hostname FQDN           Домен
+  --web-server caddy|nginx  Веб-сервер (по умолчанию: caddy)
   --email EMAIL             Email для Let's Encrypt
   --secret SECRET           32 hex или dd + 32 hex
   --secret-prefix MODE       plain или dd (формат генерации)
@@ -236,6 +243,12 @@ interactive_fill() {
   echo "  оставляет значение по умолчанию."
   echo "────────────────────────────────────────────────────────────"
 
+  if [[ "$WEB_SERVER_SET" -eq 0 ]]; then
+    echo "Веб-сервер: [1] Caddy (по умолчанию)  [2] Nginx"
+    read -r -p "Выбор [1-2]: " input || die "ввод прерван"
+    case "${input:-1}" in 1) WEB_SERVER=caddy ;; 2) WEB_SERVER=nginx ;; *) die "Выбери 1 или 2" ;; esac
+  fi
+
   while :; do
     read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
@@ -301,7 +314,8 @@ interactive_fill() {
 parse_install_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --hostname)        HOSTNAME_ARG="$2";  shift 2 ;;
+      --hostname)        [[ $# -ge 2 ]] || die "--hostname требует значение"; HOSTNAME_ARG="$2"; shift 2 ;;
+      --web-server)      [[ $# -ge 2 ]] || die "--web-server требует caddy|nginx"; WEB_SERVER="$2"; WEB_SERVER_SET=1; shift 2 ;;
       --email)           EMAIL_ARG="$2";     shift 2 ;;
       --secret)          [[ $# -ge 2 ]] || die "--secret требует значение"; SECRET_ARG="$2"; shift 2 ;;
       --secret-prefix)   [[ $# -ge 2 ]] || die "--secret-prefix требует plain|dd"; SECRET_PREFIX_MODE="$2"; SECRET_PREFIX_MODE_SET=1; shift 2 ;;
@@ -323,6 +337,7 @@ parse_install_args() {
   if [[ -n "$EMAIL_ARG" ]]; then
     validate_email "$EMAIL_ARG" >/dev/null || die "невалидный email"
   fi
+  [[ "$WEB_SERVER" == "caddy" || "$WEB_SERVER" == "nginx" ]] || die "--web-server: допустимо caddy или nginx"
   [[ "$SECRET_PREFIX_MODE" == "plain" || "$SECRET_PREFIX_MODE" == "dd" ]] || die "--secret-prefix: допустимо plain или dd"
   if [[ -n "$SECRET_ARG" ]]; then
     validate_secret "$SECRET_ARG" >/dev/null || die "невалидный --secret"
@@ -350,7 +365,7 @@ parse_install_args() {
 parse_uninstall_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --keep-caddy) KEEP_CADDY=1; shift ;;
+      --keep-web-server|--keep-caddy) KEEP_WEB_SERVER=1; shift ;;
       --yes|-y)     ASSUME_YES=1; shift ;;
       *) die "Unknown arg: $1" ;;
     esac
@@ -382,6 +397,14 @@ install_deps() {
   apt-get install -y -qq --no-install-recommends \
     ca-certificates curl nftables openssl coreutils dnsutils netcat-openbsd jq git build-essential qrencode
   ok "Базовые пакеты установлены"
+}
+
+install_nginx_packages() {
+  export DEBIAN_FRONTEND=noninteractive
+  info "Устанавливаю Nginx и Certbot…"
+  apt-get install -y -qq --no-install-recommends nginx certbot
+  systemctl enable nginx.service
+  ok "Nginx и Certbot установлены"
 }
 
 check_dns() {
@@ -455,6 +478,70 @@ install_caddy() {
   fi
   install -d -o root -g caddy -m 0750 /etc/caddy
   install -d -o caddy -g caddy -m 0750 /var/lib/caddy
+}
+
+install_nginx_config() {
+  install -d -m 0755 "$ACME_WEBROOT"
+  local cert="/etc/letsencrypt/live/$HOSTNAME_ARG/fullchain.pem"
+  local key="/etc/letsencrypt/live/$HOSTNAME_ARG/privkey.pem"
+  cat > "$NGINX_SITE" <<EOF
+server {
+ listen 80;
+ server_name $HOSTNAME_ARG;
+ location ^~ /.well-known/acme-challenge/ { root $ACME_WEBROOT; }
+ location / { return 301 https://\$host\$request_uri; }
+}
+EOF
+  ln -sfn "$NGINX_SITE" "$NGINX_ENABLED"
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t || die "Nginx HTTP-конфигурация невалидна"
+  systemctl restart nginx
+  if [[ ! -s "$cert" || ! -s "$key" ]]; then
+    certbot certonly --webroot -w "$ACME_WEBROOT" -d "$HOSTNAME_ARG" --email "$EMAIL_ARG" --agree-tos --non-interactive --keep-until-expiring || die "Не удалось получить TLS-сертификат"
+  fi
+  [[ -s "$cert" && -s "$key" ]] || die "Сертификат Nginx не найден"
+  cat > "$NGINX_SITE" <<EOF
+server {
+ listen 80;
+ server_name $HOSTNAME_ARG;
+ location ^~ /.well-known/acme-challenge/ { root $ACME_WEBROOT; }
+ location / { return 301 https://\$host\$request_uri; }
+}
+server {
+ listen 443 ssl;
+ server_name $HOSTNAME_ARG;
+ ssl_certificate $cert;
+ ssl_certificate_key $key;
+ ssl_protocols TLSv1.2 TLSv1.3;
+ location / {
+  proxy_pass http://127.0.0.1:$RELAY_PORT;
+  proxy_set_header Host \$host;
+  proxy_set_header X-Real-IP \$remote_addr;
+  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_read_timeout 300s;
+ }
+}
+EOF
+  nginx -t || die "Nginx-конфигурация невалидна"
+  systemctl enable nginx.service
+  systemctl enable --now certbot.timer 2>/dev/null || true
+  ok "Nginx настроен"
+}
+
+remove_caddy() {
+  systemctl stop caddy.service 2>/dev/null || true
+  systemctl disable caddy.service 2>/dev/null || true
+  rm -f /usr/local/bin/caddy /etc/systemd/system/caddy.service
+  rm -rf /etc/caddy /var/lib/caddy /etc/systemd/system/caddy.service.d
+  userdel -r caddy 2>/dev/null || true
+}
+
+remove_nginx() {
+  systemctl stop nginx.service 2>/dev/null || true
+  systemctl disable nginx.service 2>/dev/null || true
+  rm -f "$NGINX_ENABLED" "$NGINX_SITE"
+  systemctl daemon-reload
 }
 
 install_mtproxy_backend() {
@@ -859,12 +946,12 @@ start_services() {
   systemctl enable mtproxy.service 2>/dev/null || true
   systemctl enable tproxy-server.service 2>/dev/null || true
   systemctl enable --now refresh-mtproxy-config.timer 2>/dev/null || true
-  systemctl enable caddy.service 2>/dev/null || true
+  if [[ "$WEB_SERVER" == "caddy" ]]; then systemctl enable caddy.service 2>/dev/null || true; systemctl disable --now nginx.service 2>/dev/null || true; else systemctl enable nginx.service 2>/dev/null || true; systemctl disable --now caddy.service 2>/dev/null || true; fi
 
   systemctl is-active --quiet mtproxy || systemctl start mtproxy
   systemctl is-active --quiet tproxy-firewall || systemctl start tproxy-firewall
   systemctl is-active --quiet tproxy-server || systemctl start tproxy-server
-  systemctl is-active --quiet caddy || systemctl start caddy
+  if [[ "$WEB_SERVER" == "caddy" ]]; then systemctl is-active --quiet caddy || systemctl start caddy; else systemctl is-active --quiet nginx || systemctl start nginx; systemctl enable --now certbot.timer 2>/dev/null || true; fi
 
   ok "Сервисы проверены/запущены"
 }
@@ -1059,6 +1146,7 @@ load_existing_config() {
   v="$(jq -r '.listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$RELAY_PORT" ]] || RELAY_PORT="$v"
   v="$(jq -r '.admin_listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$ADMIN_PORT" ]] || ADMIN_PORT="$v"
   v="$(jq -r '.public_dir // empty' "$cfg")"; [[ -n "$v" ]] && SITE_DIR="$v"
+  if [[ "$WEB_SERVER_SET" -eq 0 ]]; then if [[ -r /etc/tproxy-server/web-server ]]; then WEB_SERVER="$(< /etc/tproxy-server/web-server)"; elif systemctl is-enabled --quiet nginx 2>/dev/null; then WEB_SERVER=nginx; else WEB_SERVER=caddy; fi; fi
   v="$(jq -er '.profiles[0].secret | select(type == "string" and length > 0)' "$profiles")" || die "Не удалось прочитать секрет"
   [[ -n "$SECRET_ARG" ]] || SECRET_ARG="$v"
   if [[ "$SECRET_PREFIX_MODE_SET" -eq 0 ]]; then
@@ -1218,7 +1306,7 @@ run_install() {
   fetch_repo
   resolve_base_path
   ensure_tproxy_user
-  install_caddy
+  if [[ "$WEB_SERVER" == "caddy" ]]; then remove_nginx; install_caddy; else remove_caddy; install_nginx_packages; fi
   install_mtproxy_backend
   ensure_go
   build_tproxy
@@ -1226,7 +1314,7 @@ run_install() {
   write_configs
   write_mtproxy_env
   install_units
-  install_caddyfile
+  if [[ "$WEB_SERVER" == "caddy" ]]; then install_caddyfile; else install_nginx_config; fi
   validate_configs
   start_services
   wait_ready || die "relay не стал ready"
@@ -1248,11 +1336,7 @@ run_uninstall() {
   echo "  - бинарники: /usr/local/bin/tproxy-server, /usr/local/bin/mtproxy"
   echo "  - nftables: inet tproxy_backend"
   echo "  - пользователи: tproxy, mtproxy"
-  if [[ $KEEP_CADDY -eq 0 ]]; then
-    echo "  - Caddy: будет спрошено отдельно"
-  else
-    echo "  - Caddy: НЕ будет удалён (--keep-caddy)"
-  fi
+  if [[ $KEEP_WEB_SERVER -eq 0 ]]; then echo "  - веб-сервер: будет спрошено отдельно"; else echo "  - веб-сервер: НЕ будет удалён (--keep-web-server)"; fi
   echo
   confirm "Продолжить?" || die "отменено"
 
@@ -1268,6 +1352,7 @@ run_uninstall() {
   rm -f /etc/systemd/system/refresh-mtproxy-config.timer
   rm -rf /etc/systemd/system/tproxy-server.service.d
   rm -f /etc/systemd/system/caddy.service.d/tproxy.conf
+  rm -f /etc/tproxy-server/web-server
   systemctl daemon-reload
 
   nft delete table inet tproxy_backend 2>/dev/null || true
@@ -1280,17 +1365,7 @@ run_uninstall() {
   userdel -r tproxy 2>/dev/null || true
   userdel -r mtproxy 2>/dev/null || true
 
-  if [[ $KEEP_CADDY -eq 0 ]]; then
-    if confirm "Удалить Caddy?"; then
-      systemctl stop caddy 2>/dev/null || true
-      systemctl disable caddy 2>/dev/null || true
-      rm -f /usr/local/bin/caddy
-      rm -rf /etc/caddy /var/lib/caddy
-      rm -f /etc/systemd/system/caddy.service
-      systemctl daemon-reload
-      userdel -r caddy 2>/dev/null || true
-    fi
-  fi
+  if [[ $KEEP_WEB_SERVER -eq 0 ]] && confirm "Удалить Caddy и/или Nginx?"; then remove_caddy; remove_nginx; fi
 
   ok "Удаление завершено"
 }
@@ -1316,9 +1391,12 @@ run_purge() {
 # ============================================================================
 
 diagnostics_command() {
-  local failed=0 svc state file port_output log_output
-  local -a services=("tproxy-server:Основной прокси (tproxy-server)" "mtproxy:Прокси MTProxy (mtproxy)" "tproxy-firewall:Сетевой экран (tproxy-firewall)" "refresh-mtproxy-config.timer:Таймер обновления конфигурации (refresh-mtproxy-config.timer)" "caddy:Веб-сервер и HTTPS (caddy)")
+  local failed=0 svc state file port_output log_output web_server
+  web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  [[ "$web_server" == "nginx" || "$web_server" == "caddy" ]] || { if systemctl is-enabled --quiet nginx 2>/dev/null; then web_server=nginx; else web_server=caddy; fi; }
+  local -a services=("tproxy-server:Основной прокси (tproxy-server)" "mtproxy:Прокси MTProxy (mtproxy)" "tproxy-firewall:Сетевой экран (tproxy-firewall)" "refresh-mtproxy-config.timer:Таймер обновления конфигурации (refresh-mtproxy-config.timer)" "$web_server:Веб-сервер и HTTPS ($web_server)")
   local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
+  if [[ "$web_server" == "nginx" ]]; then configs+=(/etc/nginx/sites-available/tproxy-server); else configs+=(/etc/caddy/Caddyfile); fi
 
   echo
   echo "------------------------------------------------------------"
@@ -1367,7 +1445,7 @@ diagnostics_command() {
 
   echo
   echo "4. Последние ошибки служб"
-  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u caddy -p err -n 8 --no-pager -o short-iso 2>/dev/null || true)"
+  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u "$web_server" -p err -n 8 --no-pager -o short-iso 2>/dev/null || true)"
   if [[ -n "$log_output" ]]; then
     printf '%s\n' "$log_output" | sed 's/^/  /'
   else
@@ -1451,7 +1529,7 @@ show_menu() {
   echo "------------------------------------------------------------"
   echo "  1) Установить tproxy-server"
   echo "  2) Обновить (без пересоздания существующих сервисов)"
-  echo "  3) Удалить tproxy-server (Caddy оставить)"
+  echo "  3) Удалить tproxy-server (веб-сервер оставить)"
   echo "  4) Удалить всё, включая пакеты"
   echo "  5) Просмотреть текущую конфигурацию"
   echo "  6) Инструменты"
