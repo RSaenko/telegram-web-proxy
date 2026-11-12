@@ -24,7 +24,7 @@ readonly CADDY_VERSION="2.11.4"
 readonly CADDY_SHA512="8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9"
 readonly DEFAULT_PORT=8080
 readonly DEFAULT_ADMIN_PORT=8081
-readonly PURGE_PACKAGES=(nftables git jq netcat-openbsd dnsutils build-essential)
+readonly PURGE_PACKAGES=(nftables git jq netcat-openbsd dnsutils build-essential qrencode)
 
 # ----------------------------- переменные -----------------------------------
 MODE=""
@@ -354,7 +354,7 @@ install_deps() {
   info "apt update + базовые пакеты…"
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    ca-certificates curl nftables openssl coreutils dnsutils netcat-openbsd jq git build-essential
+    ca-certificates curl nftables openssl coreutils dnsutils netcat-openbsd jq git build-essential qrencode
   ok "Базовые пакеты установлены"
 }
 
@@ -876,12 +876,33 @@ web_proxy_secret() {
   } | base64 | tr '+/' '-_' | tr -d '=\n'
 }
 
+generate_proxy_qr() {
+  local link="$1" qr_file="${2:-/etc/tproxy-server/proxy-qr.png}"
+  command -v qrencode >/dev/null 2>&1 || die "qrencode не установлен"
+  install -d -m 0750 /etc/tproxy-server
+  qrencode -o "$qr_file" -t PNG -s 8 -m 2 "$link"
+  chmod 0600 "$qr_file"
+  chown root:root "$qr_file"
+  ok "QR-код сохранён: $qr_file (права 0600)"
+}
+
+print_proxy_qr_terminal() {
+  local link="$1"
+  if command -v qrencode >/dev/null 2>&1 && [[ -t 1 ]]; then
+    echo
+    echo "QR-код для подключения:"
+    qrencode -t ANSIUTF8 "$link"
+  fi
+}
+
 print_summary() {
   local client_address="$HOSTNAME_ARG"
   if [[ -n "$BASE_PATH_ARG" ]]; then
     client_address="$HOSTNAME_ARG/$BASE_PATH_ARG"
   fi
   local proxy_secret; proxy_secret="$(web_proxy_secret)"
+  local proxy_link="https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret"
+  generate_proxy_qr "$proxy_link"
   cat <<EOF
 
 ════════════════════════════════════════════════════════════════════
@@ -918,6 +939,7 @@ print_summary() {
  открывать не требуется.
 ════════════════════════════════════════════════════════════════════
 EOF
+  print_proxy_qr_terminal "$proxy_link"
 }
 
 
@@ -952,6 +974,7 @@ run_config() {
     proxy_secret="$(web_proxy_secret)"
     server="$host"; if [[ -n "$base" ]]; then server="$host/$base"; fi
     link="https://t.me/webproxy?server=${server//\//%2F}&secret=$proxy_secret"
+    generate_proxy_qr "$link"
   fi
   local report
   report="$(cat <<EOF
@@ -982,6 +1005,7 @@ done)
 
 Ссылки подключения:
 ${link:-<не удалось сформировать: проверь config.json и profiles.json>}
+QR-код (PNG)          : ${link:+/etc/tproxy-server/proxy-qr.png}
 ==============================================================
 EOF
 )"
@@ -991,6 +1015,7 @@ EOF
     echo "Конфигурация сохранена: $output (0600)"
   else
     printf '%s\n' "$report"
+    [[ -n "$link" ]] && print_proxy_qr_terminal "$link"
   fi
 }
 
