@@ -1372,9 +1372,9 @@ diagnostics_command() {
     local unit="${svc%%:*}" label="${svc#*:}"
     state="$(systemctl is-active "$unit" 2>/dev/null || true)"
     if [[ "$state" == "active" ]]; then
-      printf "  [✓] %-28s %s\n" "$label" "работает"
+      printf "  [✓] %-14s %s\\n" "работает" "$label"
     else
-      printf "  [✗] %-28s %s\n" "$label" "${state:-неизвестно}"
+      printf "  [✗] %-14s %s\\n" "${state:-неизвестно}" "$label"
       failed=1
     fi
   done
