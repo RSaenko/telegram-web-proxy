@@ -166,7 +166,7 @@ ui_item() {
   local __var="$1" label="$2" validator="$3"
   local input err
   while :; do
-    read -r -p "$label: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s %s: ' "$UI_CYAN" "$UI_RESET" "$label")" input || die "ввод прерван"
     if [[ -z "$input" ]]; then echo "  ⚠️  обязательно"; continue; fi
     if err="$("$validator" "$input")"; then
       printf -v "$__var" '%s' "$input"; return 0
@@ -180,7 +180,7 @@ prompt_port() {
   local var="$1" label="$2" default="$3"
   local input err
   while :; do
-    read -r -p "$label [$default]: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s %s [%s]: ' "$UI_CYAN" "$UI_RESET" "$label" "$default")" input || die "ввод прерван"
     input="${input:-$default}"
     if ! err="$(validate_port "$input")"; then
       echo "  ⚠️  $err"; continue
@@ -295,13 +295,13 @@ interactive_fill() {
   WORKERS_ARG="${WORKERS_ARG:-1}"
   MAXCONN_ARG="${MAXCONN_ARG:-4096}"
   while :; do
-    read -r -p "Количество MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Количество MTProxy workers [%s] (Enter — оставить): ' "$UI_CYAN" "$UI_RESET" "$WORKERS_ARG")" input || die "ввод прерван"
     input="${input:-$WORKERS_ARG}"
     if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
     echo "  ⚠️  workers должен быть числом от 1 до 256"
   done
   while :; do
-    read -r -p "MTProxy max-connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s MTProxy max-connections [%s] (Enter — оставить): ' "$UI_CYAN" "$UI_RESET" "$MAXCONN_ARG")" input || die "ввод прерван"
     input="${input:-$MAXCONN_ARG}"
     if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
     echo "  ⚠️  max-connections должен быть положительным числом"
@@ -1106,7 +1106,7 @@ load_existing_config() {
 prompt_update_value() {
   local var="$1" label="$2" current="$3" validator="$4" input err
   while :; do
-    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s %s [%s] (Enter — оставить): ' "$UI_CYAN" "$UI_RESET" "$label" "$current")" input || die "ввод прерван"
     input="${input:-$current}"
     if err="$("$validator" "$input")"; then printf -v "$var" '%s' "$input"; return 0; fi
     echo "  ⚠️  $err — попробуй ещё раз"
@@ -1160,13 +1160,13 @@ interactive_update_fill() {
 
   local input
   while :; do
-    read -r -p "MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s MTProxy workers [%s] (Enter — оставить): ' "$UI_CYAN" "$UI_RESET" "$WORKERS_ARG")" input || die "ввод прерван"
     input="${input:-$WORKERS_ARG}"
     if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
     echo "  ⚠️  workers должен быть числом от 1 до 256"
   done
   while :; do
-    read -r -p "MTProxy max connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s MTProxy max connections [%s] (Enter — оставить): ' "$UI_CYAN" "$UI_RESET" "$MAXCONN_ARG")" input || die "ввод прерван"
     input="${input:-$MAXCONN_ARG}"
     if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
     echo "  ⚠️  max connections должен быть положительным числом"
@@ -1188,8 +1188,7 @@ interactive_update_fill() {
 
 
 show_operation_overview() {
-  echo
-  echo "════════════════════════════════════════════════════════════════════"
+  ui_header "TPROXY · ПОДГОТОВКА" "INSTALL / UPDATE OVERVIEW"
   if [[ "$MODE" == "update" ]]; then
     echo "  ПЕРЕД ОБНОВЛЕНИЕМ"
     cat <<'EOF'
@@ -1219,7 +1218,6 @@ EOF
   В firewall VPS разреши входящие TCP 80 и 443. UDP не требуется.
   Нужен root-доступ; службы могут быть перезапущены.
 EOF
-  echo "════════════════════════════════════════════════════════════════════"
   echo
 }
 
@@ -1259,9 +1257,7 @@ run_install() {
 
 run_uninstall() {
   require_root
-  echo "════════════════════════════════════════════════════════════"
-  echo "  Удаление tproxy-server"
-  echo "════════════════════════════════════════════════════════════"
+  ui_header "TPROXY · УДАЛЕНИЕ" "UNINSTALL"
   echo "Будет удалено:"
   echo "  • сервисы: tproxy-server, mtproxy, tproxy-firewall, refresh-mtproxy-config"
   echo "  • каталоги: $REPO_DIR, /etc/tproxy-server, /etc/mtproxy; сайт $SITE_DIR сохраняется"
