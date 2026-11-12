@@ -306,13 +306,12 @@ sudo ./tgweb-install.sh --help
 
 ```bash
 sudo ./tgweb-install.sh diagnostics
-# status — альтернативное имя той же команды
 sudo ./tgweb-install.sh backup
 sudo ./tgweb-install.sh backup /root/tproxy-backup.tar.gz
 sudo ./tgweb-install.sh restore /root/tproxy-backup.tar.gz
 ```
 
-- `diagnostics` (или `status`) запускает единую диагностику: состояние systemd-служб с указанием их unit-имён, проверку JSON-конфигураций, список слушающих TCP-портов и последние ошибки из журналов systemd.
+- `diagnostics` запускает диагностику: состояние systemd-служб с указанием их unit-имён, проверку JSON-конфигураций, список слушающих TCP-портов и последние ошибки из журналов systemd.
 - `backup` архивирует конфигурации tproxy-server, MTProxy, Caddy и связанные systemd units. Архив создаётся с правами `0600`.
 - `restore` восстанавливает файлы из архива и выполняет `systemctl daemon-reload`. После восстановления проверь конфигурацию и состояние служб вручную.
 
