@@ -979,11 +979,127 @@ EOF
     printf '%s\n' "$report"
   fi
 }
+
+load_existing_config() {
+  local cfg=/etc/tproxy-server/config.json profiles=/etc/tproxy-server/profiles.json
+  local envf=/etc/mtproxy/mtproxy.env dropin=/etc/systemd/system/caddy.service.d/tproxy.conf v
+  [[ -r "$cfg" && -r "$profiles" && -r "$envf" ]] || die "Не найдена полная установленная конфигурация; сначала выполни config"
+  command -v jq >/dev/null 2>&1 || die "Для чтения настроек нужен jq"
+  v="$(jq -er '.public_hostname | select(type == "string" and length > 0)' "$cfg")" || die "Не удалось прочитать hostname"
+  [[ -n "$HOSTNAME_ARG" ]] || HOSTNAME_ARG="$v"
+  v="$(jq -r '.base_path // "none"' "$cfg")"; [[ -n "$BASE_PATH_ARG" ]] || BASE_PATH_ARG="$v"
+  v="$(jq -r '.listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$RELAY_PORT" ]] || RELAY_PORT="$v"
+  v="$(jq -r '.admin_listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$ADMIN_PORT" ]] || ADMIN_PORT="$v"
+  v="$(jq -r '.public_dir // empty' "$cfg")"; [[ -n "$v" ]] && SITE_DIR="$v"
+  v="$(jq -er '.profiles[0].secret | select(type == "string" and length > 0)' "$profiles")" || die "Не удалось прочитать секрет"
+  [[ -n "$SECRET_ARG" ]] || SECRET_ARG="$v"
+  v="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"; [[ -n "$WORKERS_ARG" ]] || WORKERS_ARG="${v:-1}"
+  v="$(sed -n 's/^MTPROXY_MAX_CONNECTIONS=//p' "$envf" | head -n1)"; [[ -n "$MAXCONN_ARG" ]] || MAXCONN_ARG="${v:-4096}"
+  if [[ -r "$dropin" ]]; then
+    v="$(sed -n 's/^Environment=ACME_EMAIL=//p' "$dropin" | head -n1)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  [[ -n "$EMAIL_ARG" ]] || die "Не удалось прочитать email из $dropin; укажи --email"
+  validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
+  validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
+  validate_port "$RELAY_PORT" >/dev/null || die "Некорректный текущий relay-порт"
+  validate_port "$ADMIN_PORT" >/dev/null || die "Некорректный текущий admin-порт"
+  validate_secret "$SECRET_ARG" >/dev/null || die "Некорректный текущий секрет"
+  validate_base_path "$BASE_PATH_ARG" >/dev/null || die "Некорректный текущий base_path"
+}
+
+prompt_update_value() {
+  local var="$1" label="$2" current="$3" validator="$4" input err
+  while :; do
+    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$current}"
+    if err="$("$validator" "$input")"; then printf -v "$var" '%s' "$input"; return 0; fi
+    echo "  ⚠️  $err — попробуй ещё раз"
+  done
+}
+
+prompt_update_port() {
+  local var="$1" label="$2" current="$3" input err
+  while :; do
+    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$current}"
+    if ! err="$(validate_port "$input")"; then echo "  ⚠️  $err"; continue; fi
+    if [[ "$input" != "$current" ]] && port_in_use "$input"; then echo "  ⚠️  порт $input уже занят"; continue; fi
+    printf -v "$var" '%s' "$input"; return 0
+  done
+}
+
+prompt_update_secret() {
+  local answer s1 s2
+  read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
+  [[ "$answer" =~ ^[Nn]$ ]] || return 0
+  while :; do
+    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    if [[ -z "$s1" ]]; then
+      SECRET_ARG="$(openssl rand -hex 16)"
+      [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
+      info "Сгенерирован новый секрет"; return 0
+    fi
+    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
+    validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
+    SECRET_ARG="$s1"; return 0
+  done
+}
+
+interactive_update_fill() {
+  load_existing_config
+  echo
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Обновление tproxy-server"
+  echo "  Текущие значения указаны в [квадратных скобках]."
+  echo "  Enter — оставить без изменений."
+  echo "────────────────────────────────────────────────────────────"
+  prompt_update_value HOSTNAME_ARG "Домен" "$HOSTNAME_ARG" validate_hostname
+  prompt_update_value EMAIL_ARG "Email Let's Encrypt" "$EMAIL_ARG" validate_email
+  prompt_update_value BASE_PATH_ARG "Base path (none — корень)" "$BASE_PATH_ARG" validate_base_path
+  prompt_update_port RELAY_PORT "Relay-порт" "$RELAY_PORT"
+  prompt_update_port ADMIN_PORT "Admin-порт" "$ADMIN_PORT"
+  [[ "$RELAY_PORT" != "$ADMIN_PORT" ]] || die "relay- и admin-порты должны различаться"
+  prompt_update_secret
+
+  local input
+  while :; do
+    read -r -p "MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$WORKERS_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
+    echo "  ⚠️  workers должен быть числом от 1 до 256"
+  done
+  while :; do
+    read -r -p "MTProxy max connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$MAXCONN_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
+    echo "  ⚠️  max connections должен быть положительным числом"
+  done
+
+  echo
+  echo "Итоговые параметры:"
+  echo "  Домен      : $HOSTNAME_ARG"
+  echo "  Email      : $EMAIL_ARG"
+  echo "  Base path  : $BASE_PATH_ARG"
+  echo "  Relay port : $RELAY_PORT"
+  echo "  Admin port : $ADMIN_PORT"
+  echo "  Секрет     : сохранён / изменён (значение скрыто)"
+  echo "  Workers    : $WORKERS_ARG"
+  echo "  Max conns  : $MAXCONN_ARG"
+  echo "  Каталог    : $SITE_DIR"
+  confirm "Применить обновление?" || die "обновление отменено"
+}
+
 run_install() {
   require_root
   check_arch
   check_os
-  interactive_fill
+  if [[ "$MODE" == "update" ]]; then
+    interactive_update_fill
+  else
+    interactive_fill
+  fi
   install_deps
   check_dns
   fetch_repo
