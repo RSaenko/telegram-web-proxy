@@ -917,7 +917,8 @@ print_summary() {
  Internal secret: $SECRET_ARG
  Proxy server:    $client_address
  Proxy secret:    $proxy_secret
- Proxy link:      https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret
+ Proxy link:      $proxy_link
+ QR image:        /etc/tproxy-server/proxy-qr.png
 
  Проверка:
    curl -fsS http://127.0.0.1:$ADMIN_PORT/healthz
