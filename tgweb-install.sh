@@ -1300,6 +1300,38 @@ restore_command() {
   tar -C / -xzpf "$archive"; systemctl daemon-reload
   ok "Конфигурации восстановлены. Проверь их и перезапусти службы вручную."
 }
+show_tools_menu() {
+  echo
+  echo "════════════════════════════════════════════════════════════"
+  echo "  Инструменты"
+  echo "════════════════════════════════════════════════════════════"
+  echo "  1) Статус служб и портов"
+  echo "  2) Диагностика"
+  echo "  3) Создать резервную копию"
+  echo "  4) Восстановить резервную копию"
+  echo "  5) Назад"
+  echo
+  local choice archive
+  read -r -p "Выбор [1-5]: " choice
+  case "$choice" in
+    1) MODE=status ;;
+    2) MODE=diagnostics ;;
+    3)
+      read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+      MODE=backup
+      TOOL_ARG="$archive"
+      ;;
+    4)
+      read -r -p "Абсолютный путь к архиву: " archive
+      [[ -n "$archive" ]] || die "Путь к архиву не указан"
+      MODE=restore
+      TOOL_ARG="$archive"
+      ;;
+    5) show_menu ;;
+    *) die "Неверный выбор" ;;
+  esac
+}
+
 show_menu() {
   echo
   echo "════════════════════════════════════════════════════════════"
@@ -1310,17 +1342,19 @@ show_menu() {
   echo "  3) Удалить tproxy-server (Caddy оставить)"
   echo "  4) Удалить всё, включая пакеты"
   echo "  5) Просмотреть текущую конфигурацию"
-  echo "  6) Выход"
+  echo "  6) Инструменты"
+  echo "  7) Выход"
   echo
   local choice
-  read -r -p "Выбор [1-6]: " choice
+  read -r -p "Выбор [1-7]: " choice
   case "$choice" in
     1) MODE=install ;;
     2) MODE=update; SKIP_TESTS=1 ;;
     3) MODE=uninstall; KEEP_CADDY=1 ;;
     4) MODE=purge ;;
     5) MODE=config ;;
-    6) exit 0 ;;
+    6) show_tools_menu ;;
+    7) exit 0 ;;
     *) die "Неверный выбор" ;;
   esac
 }
