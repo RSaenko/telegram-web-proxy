@@ -1324,11 +1324,21 @@ run_install() {
   ensure_tproxy_user
   local previous_web_server=""
   previous_web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  # Останавливаем конкурирующий веб-сервер ДО проверки/перезапуска выбранного:
+  # иначе он продолжит занимать 80/443 (особенно при установке без marker-файла).
   if [[ "$WEB_SERVER" == "caddy" ]]; then
-    [[ "$previous_web_server" != "nginx" ]] || remove_nginx
+    if [[ "$previous_web_server" == "nginx" ]]; then
+      remove_nginx
+    else
+      systemctl disable --now nginx.service 2>/dev/null || true
+    fi
     install_caddy
   else
-    [[ "$previous_web_server" != "caddy" ]] || remove_caddy
+    if [[ "$previous_web_server" == "caddy" ]]; then
+      remove_caddy
+    else
+      systemctl disable --now caddy.service 2>/dev/null || true
+    fi
     install_nginx_packages
   fi
   install_mtproxy_backend
