@@ -67,8 +67,7 @@ Usage:
   --secret SECRET           32 hex или dd + 32 hex
   --secret-prefix MODE       plain или dd (формат генерации)
   config [--output PATH]     Показать текущие настройки (секреты скрыты)
-  status                     Состояние служб и слушающие порты
-  diagnostics                Диагностика служб и конфигураций
+  status, diagnostics        Общая диагностика: службы, порты, конфигурации и ошибки
   backup [ABSOLUTE_PATH]     Резервная копия конфигураций
   restore ABSOLUTE_PATH      Восстановить конфигурации из архива
   --base-path SLUG|none     Базовый путь (default: генерируется)
@@ -1316,23 +1315,8 @@ run_purge() {
 #  МЕНЮ
 # ============================================================================
 
-status_command() {
-  local failed=0 svc
-  for svc in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer caddy; do
-    printf '%-30s %s\n' "$svc" "$(systemctl is-active "$svc" 2>/dev/null || true)"
-    systemctl is-active --quiet "$svc" || failed=1
-  done
-  echo
-  ss -lntp 2>/dev/null || true
-  if (( failed )); then
-    warn "Одна или несколько служб неактивны. Смотри статусы выше; это не прерывает просмотр."
-  else
-    ok "Все проверяемые службы активны."
-  fi
-  return 0
-}
 diagnostics_command() {
-  local failed=0 svc state file json_ok=1 port_output log_output
+  local failed=0 svc state file port_output log_output
   local -a services=("tproxy-server:Основной прокси" "mtproxy:MTProxy" "tproxy-firewall:Firewall" "refresh-mtproxy-config.timer:Обновление конфигурации" "caddy:Caddy")
   local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
 
@@ -1373,10 +1357,10 @@ diagnostics_command() {
   done
 
   echo
-  echo "3. Сетевые порты"
-  port_output="$(ss -lntH 2>/dev/null || true)"
+  echo "3. Слушающие TCP-порты"
+  port_output="$(ss -lntp 2>/dev/null || true)"
   if [[ -n "$port_output" ]]; then
-    printf '%s\n' "$port_output" | awk '{print "  - " $4 "  (TCP)"}'
+    printf '%s\\n' "$port_output" | sed 's/^/  /'
   else
     echo "  [!] Не удалось получить список TCP-портов или нет слушающих портов"
   fi
@@ -1431,39 +1415,32 @@ show_tools_menu() {
     echo "------------------------------------------------------------"
     echo "  Инструменты"
     echo "------------------------------------------------------------"
-    echo "  1) Статус служб и портов"
-    echo "  2) Диагностика"
-    echo "  3) Создать резервную копию"
-    echo "  4) Восстановить резервную копию"
-    echo "  5) Назад"
+    echo "  1) Диагностика (службы, порты, конфигурации и ошибки)"
+    echo "  2) Создать резервную копию"
+    echo "  3) Восстановить резервную копию"
+    echo "  4) Назад"
     echo
-    read -r -p "Выбор [1-5]: " choice
+    read -r -p "Выбор [1-4]: " choice
     case "$choice" in
       1)
-        require_root
-        status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
-        ;;
-      2)
         require_root
         diagnostics_command
         read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
         ;;
-      3)
+      2)
         read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
         read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
         ;;
-      4)
+      3)
         read -e -r -p "Абсолютный путь к архиву: " archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
         read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
         ;;
-      5) return 0 ;;
-      *) warn "Неверный выбор" ;;
+      4) return 0 ;;
     esac
   done
 }
@@ -1540,8 +1517,7 @@ main() {
     uninstall) parse_uninstall_args "$@"; run_uninstall ;;
     purge)     parse_uninstall_args "$@"; run_purge ;;
     config)    require_root; run_config "$@" ;;
-    status)    require_root; status_command ;;
-    diagnostics) require_root; diagnostics_command ;;
+    status|diagnostics) require_root; diagnostics_command ;;
     backup)    require_root; backup_command "$@" ;;
     restore)   require_root; restore_command "$@" ;;
     -h|--help|help) usage; exit 0 ;;
