@@ -77,7 +77,7 @@ Usage:
   --skip-tests              Не запускать go test
   --non-interactive, -y     Ничего не спрашивать
 EOF
-  exit 1
+  return 0
 }
 
 # ----------------------------- валидаторы -----------------------------------
@@ -485,10 +485,10 @@ install_stub_site() {
   if [[ "$INSTALL_SITE" -ne 1 ]]; then info "Сайт пропущен (--no-site)"; return 0; fi
   if [[ -f "$SITE_DIR/index.html" ]]; then
     info "Сайт уже есть в $SITE_DIR — не трогаю"
-    chown -R root:root "$SITE_DIR"
-    find "$SITE_DIR" -type d -exec chmod 0755 {} +
-    find "$SITE_DIR" -type f -exec chmod 0644 {} +
-    ok "Права на $SITE_DIR приведены к 755/644"
+    : # Существующий сайт и его права не изменяем
+    : # Не меняем права пользовательского содержимого
+
+    ok "Существующий сайт сохранён без изменений"
     return 0
   fi
   info "Ставлю сайт-заглушку в $SITE_DIR…"
@@ -668,10 +668,10 @@ CSS
 </svg>
 SVG
 
-  chown -R root:root "$SITE_DIR"
-  find "$SITE_DIR" -type d -exec chmod 0755 {} +
-  find "$SITE_DIR" -type f -exec chmod 0644 {} +
-  ok "Сайт-заглушка установлен в $SITE_DIR (права 755/644)"
+  chown root:root "$SITE_DIR" "$SITE_DIR/index.html"
+  chmod 0755 "$SITE_DIR"
+  chmod 0644 "$SITE_DIR/index.html"
+  ok "Сайт-заглушка установлен в $SITE_DIR"
 }
 
 ensure_tproxy_user() {
@@ -690,7 +690,7 @@ write_configs() {
   "base_path": "$BASE_PATH_ARG",
   "listen": "127.0.0.1:$RELAY_PORT",
   "admin_listen": "127.0.0.1:$ADMIN_PORT",
-  "public_dir": "/srv/tproxy-site",
+  "public_dir": "$SITE_DIR",
   "static_routes": "exact",
   "profiles_file": "/run/credentials/tproxy-server.service/profiles.json"
 }
@@ -790,7 +790,7 @@ install_caddyfile() {
   cat > /etc/systemd/system/caddy.service.d/tproxy.conf <<EOF
 [Service]
 Environment=TPROXY_HOSTNAME=$HOSTNAME_ARG
-Environment=TPROXY_SITE_ROOT=/srv/tproxy-site
+Environment=TPROXY_SITE_ROOT=$SITE_DIR
 Environment=ACME_EMAIL=$EMAIL_ARG
 EOF
   ok "caddy.service + drop-in установлены"
@@ -806,10 +806,10 @@ verify_site_permissions() {
     fi
   done < <(find "$SITE_DIR" -type f -print0)
   if [[ $unreadable -eq 1 ]]; then
-    warn "Исправляю права…"
-    find "$SITE_DIR" -type d -exec chmod 0755 {} +
-    find "$SITE_DIR" -type f -exec chmod 0644 {} +
-    chown -R root:root "$SITE_DIR"
+    die "tproxy не может читать сайт. Исправь права вручную; установщик не меняет права существующего сайта."
+    :
+    :
+    :
   fi
   ok "Права на сайт в порядке"
 }
@@ -821,7 +821,7 @@ validate_configs() {
     -profiles-file /etc/tproxy-server/profiles.json -check \
     || die "tproxy-server -check упал"
   info "Валидация Caddyfile…"
-  TPROXY_HOSTNAME="$HOSTNAME_ARG" TPROXY_SITE_ROOT=/srv/tproxy-site ACME_EMAIL="$EMAIL_ARG" \
+  TPROXY_HOSTNAME="$HOSTNAME_ARG" TPROXY_SITE_ROOT="$SITE_DIR" ACME_EMAIL="$EMAIL_ARG" \
     /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
     || die "caddy validate упал"
   ok "Конфиги валидны"
@@ -904,7 +904,7 @@ print_summary() {
   fi
   local proxy_secret; proxy_secret="$(web_proxy_secret)"
   local proxy_link="https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret"
-  generate_proxy_qr "$proxy_link"
+  : # QR-код не создаётся автоматически, чтобы не раскрывать секрет в артефакте
   cat <<EOF
 
 ════════════════════════════════════════════════════════════════════
@@ -916,11 +916,11 @@ print_summary() {
  Relay-порт:      127.0.0.1:$RELAY_PORT
  Admin-порт:      127.0.0.1:$ADMIN_PORT
 
- Internal secret: $SECRET_ARG
+ Internal secret: [скрыт]
  Proxy server:    $client_address
- Proxy secret:    $proxy_secret
- Proxy link:      $proxy_link
- QR image:        /etc/tproxy-server/proxy-qr.png
+ Proxy secret:    [скрыт]
+ Proxy link:      [скрыта]
+ QR image:        создаётся отдельно по запросу
 
  Проверка:
    curl -fsS http://127.0.0.1:$ADMIN_PORT/healthz
@@ -1180,7 +1180,7 @@ run_uninstall() {
   echo "════════════════════════════════════════════════════════════"
   echo "Будет удалено:"
   echo "  • сервисы: tproxy-server, mtproxy, tproxy-firewall, refresh-mtproxy-config"
-  echo "  • каталоги: $REPO_DIR, /etc/tproxy-server, /etc/mtproxy, /srv/tproxy-site"
+  echo "  • каталоги: $REPO_DIR, /etc/tproxy-server, /etc/mtproxy; сайт $SITE_DIR сохраняется"
   echo "  • бинарники: /usr/local/bin/tproxy-server, /usr/local/bin/mtproxy"
   echo "  • nftables: inet tproxy_backend"
   echo "  • пользователи: tproxy, mtproxy"
@@ -1208,7 +1208,8 @@ run_uninstall() {
 
   nft delete table inet tproxy_backend 2>/dev/null || true
 
-  rm -rf "$REPO_DIR" /etc/tproxy-server /etc/mtproxy /srv/tproxy-site
+  rm -rf "$REPO_DIR" /etc/tproxy-server /etc/mtproxy
+  info "Каталог сайта $SITE_DIR сохранён."
   rm -f /usr/local/bin/tproxy-server /usr/local/bin/mtproxy
   rm -f /usr/local/sbin/refresh-mtproxy-config
 
@@ -1290,7 +1291,7 @@ main() {
       uninstall) parse_uninstall_args "$@" ;;
       purge)     parse_uninstall_args "$@" ;;
       config)    : ;;
-      -h|--help|help) usage ;;
+      -h|--help|help) usage; exit 0 ;;
       *) die "Unknown mode: $MODE (install|update|uninstall|purge|config)" ;;
     esac
   fi
