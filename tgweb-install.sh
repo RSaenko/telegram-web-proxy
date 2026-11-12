@@ -1387,8 +1387,8 @@ main() {
     config)      require_root; run_config "$@" ;;
     status)      require_root; status_command ;;
     diagnostics) require_root; diagnostics_command ;;
-    backup)      require_root; backup_command "$@" ;;
-    restore)     require_root; restore_command "$@" ;;
+    backup)      require_root; if [[ -n "${TOOL_ARG:-}" ]]; then backup_command "$TOOL_ARG"; else backup_command "$@"; fi ;;
+    restore)     require_root; if [[ -n "${TOOL_ARG:-}" ]]; then restore_command "$TOOL_ARG"; else restore_command "$@"; fi ;;
   esac
 }
 
