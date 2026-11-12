@@ -1163,8 +1163,8 @@ run_config() {
   NAT args                 : ${nat:-<не задан>}
   E-mail для Let's Encrypt : ${email:-<не найден>}
   Веб-сервер               : ${web_server:-<не определён>}
-  Секрет клиента           : ${secret:-<не задан>}
   Формат секрета           : $(if [[ "$secret" == dd* ]]; then echo "dd + 32 hex"; elif [[ -n "$secret" ]]; then echo "32 hex"; else echo "<не задан>"; fi)
+  Секрет клиента           : ${secret:-<не задан>}
 
 Слушающие TCP-порты:
 $(ss -lntp 2>/dev/null || true)
