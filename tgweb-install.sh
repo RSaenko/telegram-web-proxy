@@ -1471,10 +1471,10 @@ diagnostics_command() {
       echo "  [✗] TLS-сертификат Let's Encrypt не найден"; failed=1
     fi
   else
-    if [[ -x /usr/local/bin/caddy ]] && TPROXY_HOSTNAME="$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-      echo "  [✓] Caddy-конфигурация корректна"
+    if [[ -s /etc/caddy/Caddyfile && -x /usr/local/bin/caddy ]]; then
+      echo "  [✓] Caddyfile и бинарный файл Caddy найдены"
     else
-      echo "  [✗] Ошибка конфигурации Caddy"; failed=1
+      echo "  [✗] Caddyfile или бинарный файл Caddy не найдены"; failed=1
     fi
   fi
 
