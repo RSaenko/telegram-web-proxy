@@ -536,11 +536,17 @@ EOF
 }
 
 remove_caddy() {
-  systemctl stop caddy.service 2>/dev/null || true
-  systemctl disable caddy.service 2>/dev/null || true
-  rm -f /usr/local/bin/caddy /etc/systemd/system/caddy.service
-  rm -rf /etc/caddy /var/lib/caddy /etc/systemd/system/caddy.service.d
+  systemctl disable --now caddy.service 2>/dev/null || true
+  # Удаляем и ручную установку скрипта, и возможную пакетную установку Caddy.
+  rm -f /usr/local/bin/caddy /usr/bin/caddy
+  rm -f /etc/systemd/system/caddy.service /lib/systemd/system/caddy.service /usr/lib/systemd/system/caddy.service
+  rm -rf /etc/caddy /var/lib/caddy /var/log/caddy /etc/systemd/system/caddy.service.d
+  if dpkg-query -W -f='${Status}' caddy 2>/dev/null | grep -q 'install ok installed'; then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y caddy
+  fi
   userdel -r caddy 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl reset-failed caddy.service 2>/dev/null || true
 }
 
 remove_nginx() {
@@ -1363,6 +1369,16 @@ run_uninstall() {
   require_root
   local installed_web_server
   installed_web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  # Совместимость со старыми установками без marker-файла.
+  if [[ "$installed_web_server" != "caddy" && "$installed_web_server" != "nginx" ]]; then
+    if systemctl is-active --quiet caddy.service || systemctl is-enabled --quiet caddy.service 2>/dev/null || \
+       [[ -x /usr/local/bin/caddy || -x /usr/bin/caddy ]]; then
+      installed_web_server="caddy"
+    elif systemctl is-active --quiet nginx.service || systemctl is-enabled --quiet nginx.service 2>/dev/null || \
+         dpkg-query -W -f='${Status}' nginx 2>/dev/null | grep -q 'install ok installed'; then
+      installed_web_server="nginx"
+    fi
+  fi
   echo "------------------------------------------------------------"
   echo "  Удаление tproxy-server"
   echo "------------------------------------------------------------"
