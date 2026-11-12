@@ -13,7 +13,7 @@ Bash-скрипт для установки, обновления, настро�
 - **Сохранение настроек при обновлении**: скрипт считывает текущие параметры, показывает их как значения по умолчанию и оставляет их без изменений при нажатии Enter.
 - **Генерация или задание секрета MTProxy** в форматах `plain` и `dd`.
 - **Автоматическая генерация base path** для Web Proxy либо использование собственного пути.
-- **Установка Caddy** и автоматическое получение TLS-сертификата Let's Encrypt.
+- **Выбор веб-сервера Caddy или Nginx**. Caddy управляет TLS самостоятельно; Nginx использует Certbot и Let's Encrypt с автоматическим продлением сертификата.
 - **Создание сайта-заглушки** с главной страницей, страницами «Манифест» и «Приватность», CSS и favicon.
 - **Настройка systemd-служб** для tproxy-server, MTProxy, firewall и периодического обновления конфигурации MTProxy.
 - **Локальная фильтрация backend-портов** MTProxy с помощью nftables.
@@ -25,7 +25,7 @@ Bash-скрипт для установки, обновления, настро�
 
 ## Архитектура и порты
 
-Внешний трафик проходит через Caddy. Caddy обслуживает HTTPS-сайт и проксирует Web Proxy на локальный tproxy-server, который взаимодействует с MTProxy.
+Внешний трафик проходит через выбранный веб-сервер. Caddy самостоятельно получает и продлевает TLS-сертификаты; Nginx использует Certbot/Let's Encrypt. Оба варианта обслуживают HTTPS и проксируют Web Proxy на локальный tproxy-server, который взаимодействует с MTProxy.
 
 | Порт | Назначение | Доступ |
 |---|---|---|
@@ -77,7 +77,7 @@ chmod +x tgweb-install.sh
 sudo ./tgweb-install.sh
 ```
 
-Выберите пункт **1 — Установить tproxy-server** и следуйте подсказкам. Скрипт запросит домен, email для Let's Encrypt, порты и формат секрета. Пункт **6 — Инструменты** открывает подменю: единая диагностика служб, портов, конфигураций и ошибок, создание и восстановление резервной копии.
+Выберите пункт **1 — Установить tproxy-server** и следуйте подсказкам. Скрипт предложит выбрать Caddy или Nginx, затем запросит домен, email для Let's Encrypt, порты и формат секрета. Пункт **6 — Инструменты** открывает подменю: единая диагностика служб, портов, конфигураций и ошибок, создание и восстановление резервной копии.
 
 Для секрета можно выбрать автоматическую генерацию или ввести собственное значение. Поддерживаются 32 строчные шестнадцатеричные символа, а также такой же секрет с префиксом `dd`.
 
@@ -158,13 +158,13 @@ sudo ./tgweb-install.sh config --output /root/tproxy-config.txt
 
 ### Удаление
 
-Удалить tproxy-server и связанные с ним компоненты, оставив Caddy:
+Удалить tproxy-server и связанные с ним компоненты, оставив выбранный веб-сервер:
 
 ```bash
-sudo ./tgweb-install.sh uninstall --keep-caddy
+sudo ./tgweb-install.sh uninstall --keep-web-server
 ```
 
-Без `--keep-caddy` скрипт отдельно спросит, нужно ли удалить Caddy.
+Без `--keep-web-server` скрипт отдельно спросит, нужно ли удалить Caddy и/или Nginx.
 
 Полное удаление приложения и установленных скриптом пакетов:
 
@@ -185,6 +185,7 @@ sudo ./tgweb-install.sh uninstall --keep-caddy --yes
 | Параметр | Описание |
 |---|---|
 | `--hostname FQDN` | Домен Web Proxy в нижнем регистре, например `proxy.example.com` |
+| `--web-server caddy\|nginx` | Веб-сервер; по умолчанию Caddy. Для Nginx TLS-сертификат выпускает и обновляет Certbot |
 | `--email EMAIL` | Email для Let's Encrypt |
 | `--secret SECRET` | Секрет: 32 lowercase hex-символа или `dd` + 32 hex-символа |
 | `--secret-prefix plain\|dd` | Формат генерируемого секрета |
@@ -240,6 +241,8 @@ sudo systemctl status tproxy-server
 sudo systemctl status mtproxy
 sudo systemctl status tproxy-firewall
 sudo systemctl status caddy
+# или, если выбран Nginx:
+sudo systemctl status nginx
 ```
 
 Проверка health/ready endpoints (admin-порт по умолчанию 8081):
@@ -256,6 +259,8 @@ curl -fsS https://proxy.example.com/
 sudo journalctl -u tproxy-server -n 100 --no-pager
 sudo journalctl -u mtproxy -n 100 --no-pager
 sudo journalctl -u caddy -n 100 --no-pager
+# или, если выбран Nginx:
+sudo journalctl -u nginx -n 100 --no-pager
 ```
 
 ## Что устанавливается и где хранится
@@ -272,6 +277,8 @@ sudo journalctl -u caddy -n 100 --no-pager
 | `/etc/tproxy-server/firewall.nft` | Правила firewall backend |
 | `/etc/mtproxy/mtproxy.env` | Параметры MTProxy |
 | `/etc/caddy/Caddyfile` | Конфигурация Caddy |
+| `/etc/nginx/sites-available/tproxy-server` | Конфигурация Nginx (если выбран) |
+| `/etc/letsencrypt/` | Сертификаты и настройки Certbot (если выбран Nginx) |
 | `/srv/tproxy-site` | Сайт-заглушка по умолчанию |
 | `/usr/local/sbin/refresh-mtproxy-config` | Скрипт обновления конфигурации MTProxy |
 
@@ -296,6 +303,8 @@ sudo ./tgweb-install.sh --help
 
 - [telegramdesktop/tproxy-server](https://github.com/telegramdesktop/tproxy-server) — relay и Web Proxy.
 - [Caddy](https://caddyserver.com/) — HTTPS, TLS и reverse proxy.
+- [Nginx](https://nginx.org/) — альтернативный веб-сервер и reverse proxy.
+- [Certbot](https://certbot.eff.org/) — выпуск и автоматическое продление TLS-сертификатов для Nginx.
 - [MTProxy](https://github.com/TelegramMessenger/MTProxy) — backend прокси.
 - [qrencode](https://github.com/fukuchi/libqrencode) — генерация QR-кодов.
 
