@@ -66,7 +66,11 @@ Usage:
   --email EMAIL             Email для Let's Encrypt
   --secret SECRET           32 hex или dd + 32 hex
   --secret-prefix MODE       plain или dd (формат генерации)
-  config [--output PATH]     Показать текущие настройки (секреты скрыты)\n  status                     Состояние служб и слушающие порты\n  diagnostics                Диагностика служб и конфигураций\n  backup [ABSOLUTE_PATH]     Резервная копия конфигураций\n  restore ABSOLUTE_PATH      Восстановить конфигурации из архива
+  config [--output PATH]     Показать текущие настройки (секреты скрыты)
+  status                     Состояние служб и слушающие порты
+  diagnostics                Диагностика служб и конфигураций
+  backup [ABSOLUTE_PATH]     Резервная копия конфигураций
+  restore ABSOLUTE_PATH      Восстановить конфигурации из архива
   --base-path SLUG|none     Базовый путь (default: генерируется)
   --site-dir PATH           Каталог сайта (default: /srv/tproxy-site)
   --no-site                 Не устанавливать сайт
