@@ -270,7 +270,7 @@ interactive_fill() {
   done
 
   while :; do
-    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\\x27s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
