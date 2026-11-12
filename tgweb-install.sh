@@ -261,6 +261,28 @@ interactive_fill() {
   fi
   prompt_secret
 
+  if [[ -z "$WORKERS_ARG" ]]; then WORKERS_ARG=1; fi
+  if [[ -z "$MAXCONN_ARG" ]]; then MAXCONN_ARG=4096; fi
+  local tuning_input
+  while :; do
+    read -r -p "Количество MTProxy workers [$WORKERS_ARG]: " tuning_input || die "ввод прерван"
+    tuning_input="${tuning_input:-$WORKERS_ARG}"
+    if [[ "$tuning_input" =~ ^[1-9][0-9]*$ ]] && (( tuning_input <= 256 )); then
+      WORKERS_ARG="$tuning_input"
+      break
+    fi
+    echo "  ⚠️  Укажи целое число от 1 до 256"
+  done
+  while :; do
+    read -r -p "MTProxy max-connections [$MAXCONN_ARG]: " tuning_input || die "ввод прерван"
+    tuning_input="${tuning_input:-$MAXCONN_ARG}"
+    if [[ "$tuning_input" =~ ^[1-9][0-9]*$ ]]; then
+      MAXCONN_ARG="$tuning_input"
+      break
+    fi
+    echo "  ⚠️  Укажи положительное целое число"
+  done
+
   echo
   echo "────────────────────────────────────────────"
   echo "  Hostname   : $HOSTNAME_ARG"
