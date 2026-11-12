@@ -1479,7 +1479,6 @@ main() {
   if [[ $# -eq 0 ]]; then
     while true; do
       MODE=""
-      TOOL_ARG=""
       show_menu
       case "$MODE" in
         tools)
