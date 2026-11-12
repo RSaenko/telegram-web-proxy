@@ -67,7 +67,7 @@ Usage:
   --secret SECRET           32 hex или dd + 32 hex
   --secret-prefix MODE       plain или dd (формат генерации)
   config [--output PATH]     Показать текущие настройки (секреты скрыты)
-  status, diagnostics        Общая диагностика: службы, порты, конфигурации и ошибки
+  diagnostics                Диагностика: службы, порты, конфигурации и ошибки
   backup [ABSOLUTE_PATH]     Резервная копия конфигураций
   restore ABSOLUTE_PATH      Восстановить конфигурации из архива
   --base-path SLUG|none     Базовый путь (default: генерируется)
@@ -1516,11 +1516,11 @@ main() {
     uninstall) parse_uninstall_args "$@"; run_uninstall ;;
     purge)     parse_uninstall_args "$@"; run_purge ;;
     config)    require_root; run_config "$@" ;;
-    status|diagnostics) require_root; diagnostics_command ;;
+    diagnostics) require_root; diagnostics_command ;;
     backup)    require_root; backup_command "$@" ;;
     restore)   require_root; restore_command "$@" ;;
     -h|--help|help) usage; exit 0 ;;
-    *) die "Unknown mode: $MODE (install|update|uninstall|purge|config|status|diagnostics|backup|restore)" ;;
+    *) die "Unknown mode: $MODE (install|update|uninstall|purge|config|diagnostics|backup|restore)" ;;
   esac
 }
 
