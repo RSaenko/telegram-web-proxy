@@ -1263,7 +1263,12 @@ status_command() {
   done
   echo
   ss -lntp 2>/dev/null || true
-  return "$failed"
+  if (( failed )); then
+    warn "Одна или несколько служб неактивны. Смотри статусы выше; это не прерывает просмотр."
+  else
+    ok "Все проверяемые службы активны."
+  fi
+  return 0
 }
 diagnostics_command() {
   echo "=== Состояние служб ==="; status_command || true
