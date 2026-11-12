@@ -15,6 +15,7 @@ umask 077
 
 # ----------------------------- константы ------------------------------------
 readonly REPO_URL="https://github.com/telegramdesktop/tproxy-server.git"
+readonly UPSTREAM_COMMIT="c8adb8b7c6b7fc46c12ae3acb68be9070c26a8e8"
 readonly REPO_DIR="/opt/tproxy-server"
 readonly SITE_DIR_DEFAULT="/srv/tproxy-site"
 readonly GO_FALLBACK_VERSION="1.26.5"
@@ -367,16 +368,24 @@ check_dns() {
 
 fetch_repo() {
   if [[ -d "$REPO_DIR/.git" ]]; then
-    info "Обновляю $REPO_DIR"
-    git -C "$REPO_DIR" fetch --depth=1 origin HEAD
-    git -C "$REPO_DIR" reset --hard FETCH_HEAD
+    info "Получаю зафиксированную версию $UPSTREAM_COMMIT"
+    git -C "$REPO_DIR" fetch --depth=1 origin "$UPSTREAM_COMMIT"
+    git -C "$REPO_DIR" checkout --detach FETCH_HEAD
+    git -C "$REPO_DIR" reset --hard "$UPSTREAM_COMMIT"
   else
-    info "Клонирую $REPO_URL"
+    info "Клонирую $REPO_URL на зафиксированном commit $UPSTREAM_COMMIT"
     rm -rf "$REPO_DIR"
-    git clone --depth=1 "$REPO_URL" "$REPO_DIR"
+    install -d -m 0755 "$REPO_DIR"
+    git -C "$REPO_DIR" init
+    git -C "$REPO_DIR" remote add origin "$REPO_URL"
+    git -C "$REPO_DIR" fetch --depth=1 origin "$UPSTREAM_COMMIT"
+    git -C "$REPO_DIR" checkout --detach FETCH_HEAD
   fi
+  local actual_commit
+  actual_commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
+  [[ "$actual_commit" == "$UPSTREAM_COMMIT" ]] || die "Версия tproxy-server не совпадает с закреплённым commit"
   [[ -x "$REPO_DIR/deploy/install-mtproxy.sh" ]] || die "install-mtproxy.sh не найден"
-  ok "Репозиторий: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  ok "Репозиторий: $(git -C "$REPO_DIR" rev-parse --short HEAD) (pinned)"
 }
 
 resolve_base_path() {
