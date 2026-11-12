@@ -1099,7 +1099,7 @@ EOF
 
 run_config() {
   local cfg=/etc/tproxy-server/config.json profiles=/etc/tproxy-server/profiles.json
-  local envf=/etc/mtproxy/mtproxy.env host="" base="" relay="" admin="" public_dir=""
+  local envf=/etc/mtproxy/mtproxy.env host="" base="" relay="" admin="" public_dir="" email="" web_server=""
   local backend="" secret="" workers="" maxconn="" nat="" proxy_secret="" server="" link="" output=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1117,6 +1117,19 @@ run_config() {
   if [[ -r "$profiles" ]] && command -v jq >/dev/null 2>&1; then
     secret="$(jq -r '.profiles[0].secret // empty' "$profiles")"
     backend="$(jq -r '.profiles[0].backend // empty' "$profiles")"
+  fi
+  if [[ -r /etc/systemd/system/caddy.service.d/tproxy.conf ]]; then
+    email="$(sed -n 's/^Environment=ACME_EMAIL=//p' /etc/systemd/system/caddy.service.d/tproxy.conf | head -n1)"
+  fi
+  if [[ -z "$email" && -d /etc/letsencrypt/renewal ]]; then
+    email="$(grep -RhoE '^[[:space:]]*email[[:space:]]*=[[:space:]]*[^[:space:]]+' /etc/letsencrypt/renewal 2>/dev/null | head -n1 | cut -d= -f2- | xargs || true)"
+  fi
+  if [[ -r /etc/tproxy-server/web-server ]]; then
+    web_server="$(cat /etc/tproxy-server/web-server)"
+  elif systemctl is-enabled --quiet nginx 2>/dev/null; then
+    web_server=nginx
+  else
+    web_server=caddy
   fi
   if [[ -r "$envf" ]]; then
     workers="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"
@@ -1146,6 +1159,8 @@ MTProxy backend        : ${backend:-<не задан>}
 Workers                : ${workers:-<не задан>}
 Max connections        : ${maxconn:-<не задан>}
 NAT args               : ${nat:-<не задан>}
+E-mail для Let's Encrypt : ${email:-<не найден>}
+Веб-сервер              : ${web_server:-<не определён>}
 Секрет клиента         : ${secret:-<не задан>}
 Формат секрета         : $(if [[ "$secret" == dd* ]]; then echo "dd + 32 hex"; elif [[ -n "$secret" ]]; then echo "32 hex"; else echo "<не задан>"; fi)
 
@@ -1153,7 +1168,7 @@ NAT args               : ${nat:-<не задан>}
 $(ss -lntp 2>/dev/null || true)
 
 Состояние служб:
-$(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer caddy; do
+$(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer "$web_server"; do
   printf '  %-28s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || echo unknown)"
 done)
 
@@ -1266,7 +1281,7 @@ interactive_update_fill() {
   echo "  Enter — оставить без изменений."
   echo "────────────────────────────────────────────────────────────"
   prompt_update_value HOSTNAME_ARG "Домен" "$HOSTNAME_ARG" validate_hostname
-  prompt_update_value EMAIL_ARG "Email Let's Encrypt" "$EMAIL_ARG" validate_email
+  # Email is retained from the existing ACME configuration; --email can override it.
   prompt_update_value BASE_PATH_ARG "Base path (none — корень)" "$BASE_PATH_ARG" validate_base_path
   prompt_update_port RELAY_PORT "Relay-порт" "$RELAY_PORT"
   prompt_update_port ADMIN_PORT "Admin-порт" "$ADMIN_PORT"
