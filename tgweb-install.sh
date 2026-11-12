@@ -162,7 +162,9 @@ ui_item() {
   local n="$1" label="$2" glyph="›"
   case "$n" in 01) glyph="↓" ;; 02) glyph="↻" ;; 03) glyph="×" ;; 04) glyph="!" ;; 05) glyph="⚙" ;; 06) glyph="◇" ;; 07) glyph="↩" ;; esac
   printf "  %s%s %s%-4s%s %s\n" "$UI_BLUE" "$glyph" "$UI_CYAN" "$n" "$UI_RESET" "$label"
-}prompt_value() {
+}
+
+prompt_value() {
   local __var="$1" label="$2" validator="$3"
   local input err
   while :; do
@@ -230,8 +232,8 @@ prompt_secret() {
       return 0
     fi
     local s1 s2
-    read -r -s -p "Секрет: " s1; echo
-    read -r -s -p "Повтор: " s2; echo
+    read -r -s -p "$(printf '%s›%s Секрет: ' "$UI_CYAN" "$UI_RESET")" s1; echo
+    read -r -s -p "$(printf '%s›%s Повтор: ' "$UI_CYAN" "$UI_RESET")" s2; echo
     if [[ "$s1" != "$s2" ]]; then echo "  ⚠️  не совпало"; continue; fi
     if ! [[ "$s1" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
       echo "  ⚠️  32 hex (опционально dd-префикс)"; continue
@@ -1129,13 +1131,13 @@ prompt_update_secret() {
   read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
   [[ "$answer" =~ ^[Nn]$ ]] || return 0
   while :; do
-    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Новый секрет (Enter — сгенерировать): ' "$UI_CYAN" "$UI_RESET")" s1 || die "ввод прерван"; echo
     if [[ -z "$s1" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
       info "Сгенерирован новый секрет"; return 0
     fi
-    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Повторите секрет: ' "$UI_CYAN" "$UI_RESET")" s2 || die "ввод прерван"; echo
     [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
     validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
     SECRET_ARG="$s1"; return 0
@@ -1454,25 +1456,25 @@ show_tools_menu() {
       1)
         require_root
         status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       2)
         require_root
         diagnostics_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       3)
-        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        read -r -p "$(printf '%s›%s Путь к архиву (Enter — путь по умолчанию): ' "$UI_CYAN" "$UI_RESET")" archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       4)
-        read -e -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "$(printf '%s›%s Абсолютный путь к архиву: ' "$UI_CYAN" "$UI_RESET")" archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       5) return 0 ;;
       *) warn "Неверный выбор" ;;
@@ -1521,7 +1523,7 @@ main() {
         config)
           require_root
           run_config
-          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в главное меню...' "$UI_CYAN" "$UI_RESET")" _
           ;;
         install)
           run_install
@@ -1629,8 +1631,8 @@ prompt_secret() {
       return 0
     fi
     local s1 s2
-    read -r -s -p "Секрет: " s1; echo
-    read -r -s -p "Повтор: " s2; echo
+    read -r -s -p "$(printf '%s›%s Секрет: ' "$UI_CYAN" "$UI_RESET")" s1; echo
+    read -r -s -p "$(printf '%s›%s Повтор: ' "$UI_CYAN" "$UI_RESET")" s2; echo
     if [[ "$s1" != "$s2" ]]; then echo "  ⚠️  не совпало"; continue; fi
     if ! [[ "$s1" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
       echo "  ⚠️  32 hex (опционально dd-префикс)"; continue
@@ -2532,13 +2534,13 @@ prompt_update_secret() {
   read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
   [[ "$answer" =~ ^[Nn]$ ]] || return 0
   while :; do
-    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Новый секрет (Enter — сгенерировать): ' "$UI_CYAN" "$UI_RESET")" s1 || die "ввод прерван"; echo
     if [[ -z "$s1" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
       info "Сгенерирован новый секрет"; return 0
     fi
-    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Повторите секрет: ' "$UI_CYAN" "$UI_RESET")" s2 || die "ввод прерван"; echo
     [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
     validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
     SECRET_ARG="$s1"; return 0
@@ -2865,25 +2867,25 @@ show_tools_menu() {
       1)
         require_root
         status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       2)
         require_root
         diagnostics_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       3)
-        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        read -r -p "$(printf '%s›%s Путь к архиву (Enter — путь по умолчанию): ' "$UI_CYAN" "$UI_RESET")" archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       4)
-        read -e -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "$(printf '%s›%s Абсолютный путь к архиву: ' "$UI_CYAN" "$UI_RESET")" archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       5) return 0 ;;
       *) warn "Неверный выбор" ;;
@@ -2932,7 +2934,7 @@ main() {
         config)
           require_root
           run_config
-          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в главное меню...' "$UI_CYAN" "$UI_RESET")" _
           ;;
         install)
           run_install
@@ -3040,8 +3042,8 @@ prompt_secret() {
       return 0
     fi
     local s1 s2
-    read -r -s -p "Секрет: " s1; echo
-    read -r -s -p "Повтор: " s2; echo
+    read -r -s -p "$(printf '%s›%s Секрет: ' "$UI_CYAN" "$UI_RESET")" s1; echo
+    read -r -s -p "$(printf '%s›%s Повтор: ' "$UI_CYAN" "$UI_RESET")" s2; echo
     if [[ "$s1" != "$s2" ]]; then echo "  ⚠️  не совпало"; continue; fi
     if ! [[ "$s1" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
       echo "  ⚠️  32 hex (опционально dd-префикс)"; continue
@@ -3943,13 +3945,13 @@ prompt_update_secret() {
   read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
   [[ "$answer" =~ ^[Nn]$ ]] || return 0
   while :; do
-    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Новый секрет (Enter — сгенерировать): ' "$UI_CYAN" "$UI_RESET")" s1 || die "ввод прерван"; echo
     if [[ -z "$s1" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
       info "Сгенерирован новый секрет"; return 0
     fi
-    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Повторите секрет: ' "$UI_CYAN" "$UI_RESET")" s2 || die "ввод прерван"; echo
     [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
     validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
     SECRET_ARG="$s1"; return 0
@@ -4276,25 +4278,25 @@ show_tools_menu() {
       1)
         require_root
         status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       2)
         require_root
         diagnostics_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       3)
-        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        read -r -p "$(printf '%s›%s Путь к архиву (Enter — путь по умолчанию): ' "$UI_CYAN" "$UI_RESET")" archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       4)
-        read -e -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "$(printf '%s›%s Абсолютный путь к архиву: ' "$UI_CYAN" "$UI_RESET")" archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       5) return 0 ;;
       *) warn "Неверный выбор" ;;
@@ -4343,7 +4345,7 @@ main() {
         config)
           require_root
           run_config
-          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в главное меню...' "$UI_CYAN" "$UI_RESET")" _
           ;;
         install)
           run_install
@@ -4451,8 +4453,8 @@ prompt_secret() {
       return 0
     fi
     local s1 s2
-    read -r -s -p "Секрет: " s1; echo
-    read -r -s -p "Повтор: " s2; echo
+    read -r -s -p "$(printf '%s›%s Секрет: ' "$UI_CYAN" "$UI_RESET")" s1; echo
+    read -r -s -p "$(printf '%s›%s Повтор: ' "$UI_CYAN" "$UI_RESET")" s2; echo
     if [[ "$s1" != "$s2" ]]; then echo "  ⚠️  не совпало"; continue; fi
     if ! [[ "$s1" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
       echo "  ⚠️  32 hex (опционально dd-префикс)"; continue
@@ -5354,13 +5356,13 @@ prompt_update_secret() {
   read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
   [[ "$answer" =~ ^[Nn]$ ]] || return 0
   while :; do
-    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Новый секрет (Enter — сгенерировать): ' "$UI_CYAN" "$UI_RESET")" s1 || die "ввод прерван"; echo
     if [[ -z "$s1" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
       info "Сгенерирован новый секрет"; return 0
     fi
-    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Повторите секрет: ' "$UI_CYAN" "$UI_RESET")" s2 || die "ввод прерван"; echo
     [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
     validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
     SECRET_ARG="$s1"; return 0
@@ -5687,25 +5689,25 @@ show_tools_menu() {
       1)
         require_root
         status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       2)
         require_root
         diagnostics_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       3)
-        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        read -r -p "$(printf '%s›%s Путь к архиву (Enter — путь по умолчанию): ' "$UI_CYAN" "$UI_RESET")" archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       4)
-        read -e -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "$(printf '%s›%s Абсолютный путь к архиву: ' "$UI_CYAN" "$UI_RESET")" archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       5) return 0 ;;
       *) warn "Неверный выбор" ;;
@@ -5754,7 +5756,7 @@ main() {
         config)
           require_root
           run_config
-          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в главное меню...' "$UI_CYAN" "$UI_RESET")" _
           ;;
         install)
           run_install
@@ -5862,8 +5864,8 @@ prompt_secret() {
       return 0
     fi
     local s1 s2
-    read -r -s -p "Секрет: " s1; echo
-    read -r -s -p "Повтор: " s2; echo
+    read -r -s -p "$(printf '%s›%s Секрет: ' "$UI_CYAN" "$UI_RESET")" s1; echo
+    read -r -s -p "$(printf '%s›%s Повтор: ' "$UI_CYAN" "$UI_RESET")" s2; echo
     if [[ "$s1" != "$s2" ]]; then echo "  ⚠️  не совпало"; continue; fi
     if ! [[ "$s1" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
       echo "  ⚠️  32 hex (опционально dd-префикс)"; continue
@@ -6765,13 +6767,13 @@ prompt_update_secret() {
   read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
   [[ "$answer" =~ ^[Nn]$ ]] || return 0
   while :; do
-    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Новый секрет (Enter — сгенерировать): ' "$UI_CYAN" "$UI_RESET")" s1 || die "ввод прерван"; echo
     if [[ -z "$s1" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
       info "Сгенерирован новый секрет"; return 0
     fi
-    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Повторите секрет: ' "$UI_CYAN" "$UI_RESET")" s2 || die "ввод прерван"; echo
     [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
     validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
     SECRET_ARG="$s1"; return 0
@@ -7098,25 +7100,25 @@ show_tools_menu() {
       1)
         require_root
         status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       2)
         require_root
         diagnostics_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       3)
-        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        read -r -p "$(printf '%s›%s Путь к архиву (Enter — путь по умолчанию): ' "$UI_CYAN" "$UI_RESET")" archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       4)
-        read -e -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "$(printf '%s›%s Абсолютный путь к архиву: ' "$UI_CYAN" "$UI_RESET")" archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       5) return 0 ;;
       *) warn "Неверный выбор" ;;
@@ -7165,7 +7167,7 @@ main() {
         config)
           require_root
           run_config
-          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в главное меню...' "$UI_CYAN" "$UI_RESET")" _
           ;;
         install)
           run_install
@@ -7290,8 +7292,8 @@ prompt_secret() {
       return 0
     fi
     local s1 s2
-    read -r -s -p "Секрет: " s1; echo
-    read -r -s -p "Повтор: " s2; echo
+    read -r -s -p "$(printf '%s›%s Секрет: ' "$UI_CYAN" "$UI_RESET")" s1; echo
+    read -r -s -p "$(printf '%s›%s Повтор: ' "$UI_CYAN" "$UI_RESET")" s2; echo
     if [[ "$s1" != "$s2" ]]; then echo "  ⚠️  не совпало"; continue; fi
     if ! [[ "$s1" =~ ^([0-9a-f]{32}|dd[0-9a-f]{32})$ ]]; then
       echo "  ⚠️  32 hex (опционально dd-префикс)"; continue
@@ -8193,13 +8195,13 @@ prompt_update_secret() {
   read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
   [[ "$answer" =~ ^[Nn]$ ]] || return 0
   while :; do
-    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Новый секрет (Enter — сгенерировать): ' "$UI_CYAN" "$UI_RESET")" s1 || die "ввод прерван"; echo
     if [[ -z "$s1" ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
       [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
       info "Сгенерирован новый секрет"; return 0
     fi
-    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    read -r -s -p "$(printf '%s›%s Повторите секрет: ' "$UI_CYAN" "$UI_RESET")" s2 || die "ввод прерван"; echo
     [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
     validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
     SECRET_ARG="$s1"; return 0
@@ -8526,25 +8528,25 @@ show_tools_menu() {
       1)
         require_root
         status_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       2)
         require_root
         diagnostics_command
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       3)
-        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        read -r -p "$(printf '%s›%s Путь к архиву (Enter — путь по умолчанию): ' "$UI_CYAN" "$UI_RESET")" archive
         require_root
         if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       4)
-        read -e -r -p "Абсолютный путь к архиву: " archive
+        read -e -r -p "$(printf '%s›%s Абсолютный путь к архиву: ' "$UI_CYAN" "$UI_RESET")" archive
         [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
         require_root
         restore_command "$archive"
-        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в меню инструментов...' "$UI_CYAN" "$UI_RESET")" _
         ;;
       5) return 0 ;;
       *) warn "Неверный выбор" ;;
@@ -8593,7 +8595,7 @@ main() {
         config)
           require_root
           run_config
-          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          read -r -p "$(printf '%s›%s Нажми Enter, чтобы вернуться в главное меню...' "$UI_CYAN" "$UI_RESET")" _
           ;;
         install)
           run_install
