@@ -6,7 +6,7 @@
 #    sudo ./tproxy-manager.sh                  # интерактивное меню
 #    sudo ./tproxy-manager.sh install [опции]  # установка
 #    sudo ./tproxy-manager.sh update  [опции]  # обновление (skip-tests, не трогает сайт)
-#    sudo ./tproxy-manager.sh uninstall [--keep-caddy] [--yes]
+#    sudo ./tproxy-manager.sh uninstall [--keep-web-server] [--yes]
 #    sudo ./tproxy-manager.sh purge     [--yes]
 # ============================================================================
 set -Eeuo pipefail
@@ -1463,7 +1463,24 @@ diagnostics_command() {
   done
 
   echo
-  echo "3. Слушающие TCP-порты"
+  echo "3. Проверка конфигурации веб-сервера"
+  if [[ "$web_server" == "nginx" ]]; then
+    if nginx -t 2>&1; then echo "  [✓] Nginx-конфигурация корректна"; else echo "  [✗] Ошибка конфигурации Nginx"; failed=1; fi
+    if [[ -s "/etc/letsencrypt/live/$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null)/fullchain.pem" ]]; then
+      echo "  [✓] TLS-сертификат Let's Encrypt найден"
+    else
+      echo "  [✗] TLS-сертификат Let's Encrypt не найден"; failed=1
+    fi
+  else
+    if [[ -x /usr/local/bin/caddy ]] && TPROXY_HOSTNAME="$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+      echo "  [✓] Caddy-конфигурация корректна"
+    else
+      echo "  [✗] Ошибка конфигурации Caddy"; failed=1
+    fi
+  fi
+
+  echo
+  echo "4. Слушающие TCP-порты"
   port_output="$(ss -lntp 2>/dev/null || true)"
   if [[ -n "$port_output" ]]; then
     printf '%s\n' "$port_output" | sed 's/^/  /'
@@ -1472,7 +1489,7 @@ diagnostics_command() {
   fi
 
   echo
-  echo "4. Последние ошибки служб"
+  echo "5. Последние ошибки служб"
   log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u "$web_server" -p err -n 8 --no-pager -o short-iso 2>/dev/null || true)"
   if [[ -n "$log_output" ]]; then
     printf '%s\n' "$log_output" | sed 's/^/  /'
