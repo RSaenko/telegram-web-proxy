@@ -66,7 +66,7 @@ Usage:
   --email EMAIL             Email для Let's Encrypt
   --secret SECRET           32 hex или dd + 32 hex
   --secret-prefix MODE       plain или dd (формат генерации)
-  config [--output PATH]     Показать текущие настройки и ссылки
+  config [--output PATH]     Показать текущие настройки (секреты скрыты)\n  status                     Состояние служб и слушающие порты\n  diagnostics                Диагностика служб и конфигураций\n  backup [ABSOLUTE_PATH]     Резервная копия конфигураций\n  restore ABSOLUTE_PATH      Восстановить конфигурации из архива
   --base-path SLUG|none     Базовый путь (default: генерируется)
   --site-dir PATH           Каталог сайта (default: /srv/tproxy-site)
   --no-site                 Не устанавливать сайт
@@ -1251,6 +1251,51 @@ run_purge() {
 #  МЕНЮ
 # ============================================================================
 
+status_command() {
+  local failed=0 svc
+  for svc in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer caddy; do
+    printf '%-30s %s\n' "$svc" "$(systemctl is-active "$svc" 2>/dev/null || true)"
+    systemctl is-active --quiet "$svc" || failed=1
+  done
+  echo
+  ss -lntp 2>/dev/null || true
+  return "$failed"
+}
+diagnostics_command() {
+  echo "=== Состояние служб ==="; status_command || true
+  echo "=== Проверка конфигурации ==="
+  if [[ -r /etc/tproxy-server/config.json && -r /etc/tproxy-server/profiles.json ]]; then
+    jq empty /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json
+    stat -c '%a %U:%G %n' /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json
+  else warn "Конфигурация tproxy-server не найдена"; fi
+  for svc in tproxy-server mtproxy tproxy-firewall caddy; do
+    echo "--- $svc ---"; journalctl -u "$svc" -n 30 --no-pager 2>/dev/null || true
+  done
+}
+backup_command() {
+  local dest="${1:-/root/tproxy-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
+  [[ "$dest" = /* ]] || die "Путь backup должен быть абсолютным"
+  install -d -m 0700 "$(dirname "$dest")"
+  local items=()
+  for p in etc/tproxy-server etc/mtproxy etc/caddy/Caddyfile etc/caddy/Caddyfile.d etc/systemd/system/tproxy-server.service etc/systemd/system/mtproxy.service etc/systemd/system/tproxy-firewall.service etc/systemd/system/refresh-mtproxy-config.service etc/systemd/system/refresh-mtproxy-config.timer etc/systemd/system/caddy.service.d/tproxy.conf; do
+    [[ ! -e "/$p" ]] || items+=("$p")
+  done
+  (("${#items[@]}")) || die "Нет файлов конфигурации для резервирования"
+  tar -C / -czpf "$dest" "${items[@]}"
+  chmod 0600 "$dest"; ok "Резервная копия создана: $dest (0600)"
+}
+restore_command() {
+  local archive="${1:-}"
+  [[ -n "$archive" && -f "$archive" ]] || die "Укажи существующий архив: restore /absolute/path/backup.tar.gz"
+  [[ "$archive" = /* ]] || die "Путь к архиву должен быть абсолютным"
+  local entry
+  while IFS= read -r entry; do
+    [[ "$entry" != /* && "$entry" != *".."* ]] || die "Небезопасный путь в архиве: $entry"
+  done < <(tar -tzf "$archive")
+  confirm "Восстановить конфигурации из $archive? Текущие файлы будут перезаписаны." || die "восстановление отменено"
+  tar -C / -xzpf "$archive"; systemctl daemon-reload
+  ok "Конфигурации восстановлены. Проверь их и перезапусти службы вручную."
+}
 show_menu() {
   echo
   echo "════════════════════════════════════════════════════════════"
@@ -1290,7 +1335,7 @@ main() {
       update)    SKIP_TESTS=1; parse_install_args "$@" ;;
       uninstall) parse_uninstall_args "$@" ;;
       purge)     parse_uninstall_args "$@" ;;
-      config)    : ;;
+      config|status|diagnostics|backup|restore) : ;;
       -h|--help|help) usage; exit 0 ;;
       *) die "Unknown mode: $MODE (install|update|uninstall|purge|config)" ;;
     esac
@@ -1301,7 +1346,7 @@ main() {
     update)    run_install ;;
     uninstall) run_uninstall ;;
     purge)     run_purge ;;
-    config)    require_root; run_config "$@" ;;
+    config)      require_root; run_config "$@" ;;\n    status)      require_root; status_command ;;\n    diagnostics) require_root; diagnostics_command ;;\n    backup)      require_root; backup_command "$@" ;;\n    restore)     require_root; restore_command "$@" ;;
   esac
 }
 
