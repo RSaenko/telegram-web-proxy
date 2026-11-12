@@ -1377,7 +1377,6 @@ run_uninstall() {
   rm -f /etc/systemd/system/refresh-mtproxy-config.service
   rm -f /etc/systemd/system/refresh-mtproxy-config.timer
   rm -rf /etc/systemd/system/tproxy-server.service.d
-  rm -f /etc/systemd/system/caddy.service.d/tproxy.conf
   rm -f /etc/tproxy-server/web-server
   systemctl daemon-reload
 
