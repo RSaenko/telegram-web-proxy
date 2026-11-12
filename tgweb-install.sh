@@ -48,7 +48,7 @@ NONINTERACTIVE="${NONINTERACTIVE:-0}"
 RELAY_PORT=""
 ADMIN_PORT=""
 SKIP_TESTS="${SKIP_TESTS:-0}"
-KEEP_CADDY=0
+KEEP_WEB_SERVER=0
 ASSUME_YES=0
 GO_BIN=""
 
@@ -1158,7 +1158,11 @@ load_existing_config() {
     v="$(sed -n 's/^Environment=ACME_EMAIL=//p' "$dropin" | head -n1)"
     [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
   fi
-  [[ -n "$EMAIL_ARG" ]] || die "Не удалось прочитать email из $dropin; укажи --email"
+  if [[ "$WEB_SERVER" == "nginx" && -z "$EMAIL_ARG" ]]; then
+    v="$(grep -RhoE \"email[[:space:]]*=[[:space:]]*[^[:space:]]+\" /etc/letsencrypt/renewal 2>/dev/null | head -n1 | cut -d= -f2- | xargs || true)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  [[ -n "$EMAIL_ARG" ]] || die "Не удалось прочитать email; укажи --email"
   validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
   validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
   validate_port "$RELAY_PORT" >/dev/null || die "Некорректный текущий relay-порт"
@@ -1540,7 +1544,7 @@ show_menu() {
   case "$choice" in
     1) MODE=install ;;
     2) MODE=update; SKIP_TESTS=1 ;;
-    3) MODE=uninstall; KEEP_CADDY=1 ;;
+    3) MODE=uninstall; KEEP_WEB_SERVER=1 ;;
     4) MODE=purge ;;
     5) MODE=config ;;
     6) MODE=tools ;;
