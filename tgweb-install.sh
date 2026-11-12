@@ -1163,7 +1163,7 @@ Workers                : ${workers:-<не задан>}
 Max connections        : ${maxconn:-<не задан>}
 NAT args               : ${nat:-<не задан>}
 E-mail для Let's Encrypt : ${email:-<не найден>}
-Веб-сервер              : ${web_server:-<не определён>}
+Веб-сервер               : ${web_server:-<не определён>}
 Секрет клиента         : ${secret:-<не задан>}
 Формат секрета         : $(if [[ "$secret" == dd* ]]; then echo "dd + 32 hex"; elif [[ -n "$secret" ]]; then echo "32 hex"; else echo "<не задан>"; fi)
 
