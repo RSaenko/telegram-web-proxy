@@ -1360,7 +1360,7 @@ diagnostics_command() {
   echo "3. Слушающие TCP-порты"
   port_output="$(ss -lntp 2>/dev/null || true)"
   if [[ -n "$port_output" ]]; then
-    printf '%s\\n' "$port_output" | sed 's/^/  /'
+    printf '%s\n' "$port_output" | sed 's/^/  /'
   else
     echo "  [!] Не удалось получить список TCP-портов или нет слушающих портов"
   fi
