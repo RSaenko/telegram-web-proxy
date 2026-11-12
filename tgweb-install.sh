@@ -1225,7 +1225,7 @@ load_existing_config() {
     if [[ "$NONINTERACTIVE" == "1" ]]; then
       die "Не удалось прочитать email; укажи --email"
     fi
-    prompt_value EMAIL_ARG "Email для Let\047s Encrypt" validate_email
+    prompt_value EMAIL_ARG "Email для Let's Encrypt" validate_email
   fi
   validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
   validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
