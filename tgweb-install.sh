@@ -1427,17 +1427,14 @@ restore_command() {
 show_tools_menu() {
   local choice archive
   while true; do
+    ui_header "TPROXY · ИНСТРУМЕНТЫ" "MAINTENANCE"
+    ui_item "01" "Статус служб и портов"
+    ui_item "02" "Диагностика"
+    ui_item "03" "Создать резервную копию"
+    ui_item "04" "Восстановить резервную копию"
+    ui_item "05" "Назад"
     echo
-    echo "════════════════════════════════════════════════════════════"
-    echo "  Инструменты"
-    echo "════════════════════════════════════════════════════════════"
-    echo "  1) Статус служб и портов"
-    echo "  2) Диагностика"
-    echo "  3) Создать резервную копию"
-    echo "  4) Восстановить резервную копию"
-    echo "  5) Назад"
-    echo
-    read -r -p "Выбор [1-5]: " choice
+    read -r -p "$(printf '%s›%s Выбор [1-5]: ' "$UI_CYAN" "$UI_RESET")" choice
     case "$choice" in
       1)
         require_root
@@ -1468,20 +1465,18 @@ show_tools_menu() {
   done
 }
 show_menu() {
-  echo
-  echo "════════════════════════════════════════════════════════════"
-  echo "  tproxy-manager — что делаем?"
-  echo "════════════════════════════════════════════════════════════"
-  echo "  1) Установить tproxy-server"
-  echo "  2) Обновить (без пересоздания существующих сервисов)"
-  echo "  3) Удалить tproxy-server (Caddy оставить)"
-  echo "  4) Удалить всё, включая пакеты"
-  echo "  5) Просмотреть текущую конфигурацию"
-  echo "  6) Инструменты"
-  echo "  7) Выход"
+  ui_header "TPROXY MANAGER" "SERVER MANAGEMENT CONSOLE"
+  ui_section "ГЛАВНОЕ МЕНЮ"
+  ui_item "01" "Установка tproxy-server"
+  ui_item "02" "Обновление"
+  ui_item "03" "Удаление (Caddy оставить)"
+  ui_item "04" "Полное удаление, включая пакеты"
+  ui_item "05" "Текущая конфигурация"
+  ui_item "06" "Инструменты"
+  ui_item "07" "Выход"
   echo
   local choice
-  read -r -p "Выбор [1-7]: " choice
+  read -r -p "$(printf '%s›%s Выбор [1-7]: ' "$UI_CYAN" "$UI_RESET")" choice
   case "$choice" in
     1) MODE=install ;;
     2) MODE=update; SKIP_TESTS=1 ;;
