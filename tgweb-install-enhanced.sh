@@ -902,6 +902,20 @@ print_summary() {
    curl -fsS http://127.0.0.1:$ADMIN_PORT/healthz
    curl -fsS http://127.0.0.1:$ADMIN_PORT/readyz
    curl -fsS https://$HOSTNAME_ARG/
+
+ Firewall — разрешить входящие TCP:
+   • 80/tcp  — HTTP (редирект и ACME/Let's Encrypt)
+   • 443/tcp — HTTPS (сайт и Web Proxy)
+
+ Не открывать наружу:
+   • $RELAY_PORT/tcp — relay слушает только 127.0.0.1
+   • $ADMIN_PORT/tcp — admin/health слушает только 127.0.0.1
+   • 2398/tcp и 8888/tcp — внутренние порты MTProxy,
+     блокируются локальным firewall tproxy_backend.
+
+ Правило относится и к firewall сервера, и к firewall
+ провайдера/VPS (Security Group). UDP для этой конфигурации
+ открывать не требуется.
 ════════════════════════════════════════════════════════════════════
 EOF
 }
