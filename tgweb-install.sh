@@ -272,13 +272,13 @@ interactive_fill() {
   WORKERS_ARG="${WORKERS_ARG:-1}"
   MAXCONN_ARG="${MAXCONN_ARG:-4096}"
   while :; do
-    read -r -p "Количество MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "Количество MTProxy workers [$WORKERS_ARG]: " input || die "ввод прерван"
     input="${input:-$WORKERS_ARG}"
     if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
     echo "  ⚠️  workers должен быть числом от 1 до 256"
   done
   while :; do
-    read -r -p "MTProxy max-connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    read -r -p "MTProxy max-connections [$MAXCONN_ARG]: " input || die "ввод прерван"
     input="${input:-$MAXCONN_ARG}"
     if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
     echo "  ⚠️  max-connections должен быть положительным числом"
