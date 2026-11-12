@@ -1197,7 +1197,12 @@ load_existing_config() {
     v="$(grep -RhoE \"email[[:space:]]*=[[:space:]]*[^[:space:]]+\" /etc/letsencrypt/renewal 2>/dev/null | head -n1 | cut -d= -f2- | xargs || true)"
     [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
   fi
-  [[ -n "$EMAIL_ARG" ]] || die "Не удалось прочитать email; укажи --email"
+  if [[ -z "$EMAIL_ARG" ]]; then
+    if [[ "$NONINTERACTIVE" == "1" ]]; then
+      die "Не удалось прочитать email; укажи --email"
+    fi
+    prompt_value EMAIL_ARG "Email для Let\047s Encrypt" validate_email
+  fi
   validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
   validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
   validate_port "$RELAY_PORT" >/dev/null || die "Некорректный текущий relay-порт"
