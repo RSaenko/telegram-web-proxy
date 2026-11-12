@@ -1118,7 +1118,10 @@ run_config() {
     secret="$(jq -r '.profiles[0].secret // empty' "$profiles")"
     backend="$(jq -r '.profiles[0].backend // empty' "$profiles")"
   fi
-  if [[ -r /etc/systemd/system/caddy.service.d/tproxy.conf ]]; then
+  if [[ -r /etc/tproxy-server/acme-email ]]; then
+    email="$(head -n1 /etc/tproxy-server/acme-email | xargs || true)"
+  fi
+  if [[ -z "$email" && -r /etc/systemd/system/caddy.service.d/tproxy.conf ]]; then
     email="$(sed -n 's/^Environment=ACME_EMAIL=//p' /etc/systemd/system/caddy.service.d/tproxy.conf | head -n1)"
   fi
   if [[ -z "$email" && -d /etc/letsencrypt/renewal ]]; then
@@ -1207,12 +1210,16 @@ load_existing_config() {
   fi
   v="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"; [[ -n "$WORKERS_ARG" ]] || WORKERS_ARG="${v:-1}"
   v="$(sed -n 's/^MTPROXY_MAX_CONNECTIONS=//p' "$envf" | head -n1)"; [[ -n "$MAXCONN_ARG" ]] || MAXCONN_ARG="${v:-4096}"
-  if [[ -r "$dropin" ]]; then
+  if [[ -r /etc/tproxy-server/acme-email ]]; then
+    v="$(head -n1 /etc/tproxy-server/acme-email | xargs || true)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  if [[ -z "$EMAIL_ARG" && -r "$dropin" ]]; then
     v="$(sed -n 's/^Environment=ACME_EMAIL=//p' "$dropin" | head -n1)"
     [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
   fi
-  if [[ "$WEB_SERVER" == "nginx" && -z "$EMAIL_ARG" ]]; then
-    v="$(grep -RhoE \"email[[:space:]]*=[[:space:]]*[^[:space:]]+\" /etc/letsencrypt/renewal 2>/dev/null | head -n1 | cut -d= -f2- | xargs || true)"
+  if [[ -z "$EMAIL_ARG" && -d /etc/letsencrypt/renewal ]]; then
+    v="$(grep -RhoE '^[[:space:]]*email[[:space:]]*=[[:space:]]*[^[:space:]]+' /etc/letsencrypt/renewal 2>/dev/null | head -n1 | cut -d= -f2- | xargs || true)"
     [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
   fi
   if [[ -z "$EMAIL_ARG" ]]; then
@@ -1223,6 +1230,9 @@ load_existing_config() {
   fi
   validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
   validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
+  install -d -m 0755 /etc/tproxy-server
+  printf '%s\n' "$EMAIL_ARG" > /etc/tproxy-server/acme-email
+  chmod 0600 /etc/tproxy-server/acme-email
   validate_port "$RELAY_PORT" >/dev/null || die "Некорректный текущий relay-порт"
   validate_port "$ADMIN_PORT" >/dev/null || die "Некорректный текущий admin-порт"
   validate_secret "$SECRET_ARG" >/dev/null || die "Некорректный текущий секрет"
@@ -1363,6 +1373,9 @@ run_install() {
   else
     interactive_fill
   fi
+  install -d -m 0755 /etc/tproxy-server
+  printf '%s\n' "$EMAIL_ARG" > /etc/tproxy-server/acme-email
+  chmod 0600 /etc/tproxy-server/acme-email
   install_deps
   check_dns
   fetch_repo
