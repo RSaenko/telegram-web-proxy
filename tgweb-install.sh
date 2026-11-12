@@ -1044,7 +1044,6 @@ print_proxy_qr_terminal() {
   echo
   echo "QR-код для подключения (отсканируй камерой телефона):"
   qrencode -t ANSIUTF8 -m 2 "$link"
-  echo "PNG-файл QR-кода сохранён: /etc/tproxy-server/proxy-qr.png"
   echo
 }
 
@@ -1144,7 +1143,7 @@ run_config() {
     proxy_secret="$(web_proxy_secret)"
     server="$host"; if [[ -n "$base" ]]; then server="$host/$base"; fi
     link="https://t.me/webproxy?server=${server//\//%2F}&secret=$proxy_secret"
-    generate_proxy_qr "$link"
+    generate_proxy_qr "$link" >/dev/null
   fi
   local report
   report="$(cat <<EOF
