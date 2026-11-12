@@ -146,7 +146,7 @@ sudo ./tgweb-install.sh update --non-interactive
 sudo ./tgweb-install.sh config
 ```
 
-Команда выводит домен, base path, локальные адреса relay/admin, backend MTProxy и параметры workers/connections. Если конфигурационные файлы доступны, команда также формирует ссылку подключения и QR-код.
+Команда выводит домен, base path, локальные адреса relay/admin, backend MTProxy, параметры workers/connections, email Let's Encrypt и выбранный веб-сервер. Также отображаются секрет и его формат. Если конфигурационные файлы доступны, команда формирует ссылку подключения и QR-код; путь к PNG указывается в конце отчёта.
 
 Сохранить текстовый отчёт в файл:
 
@@ -274,15 +274,19 @@ sudo journalctl -u nginx -n 100 --no-pager
 | `/etc/tproxy-server/config.json` | Конфигурация tproxy-server |
 | `/etc/tproxy-server/profiles.json` | Профиль и секрет подключения |
 | `/etc/tproxy-server/proxy-qr.png` | QR-код подключения |
+| `/etc/tproxy-server/acme-email` | Email для Let's Encrypt, сохраняется независимо от выбранного веб-сервера |
+| `/etc/tproxy-server/web-server` | Маркер выбранного веб-сервера (`caddy` или `nginx`) |
 | `/etc/tproxy-server/firewall.nft` | Правила firewall backend |
 | `/etc/mtproxy/mtproxy.env` | Параметры MTProxy |
 | `/etc/caddy/Caddyfile` | Конфигурация Caddy |
 | `/etc/nginx/sites-available/tproxy-server` | Конфигурация Nginx (если выбран) |
+| `/etc/nginx/conf.d/tproxy-websocket-map.conf` | Map для WebSocket-соединений Nginx |
 | `/etc/letsencrypt/` | Сертификаты и настройки Certbot (если выбран Nginx) |
+| `/etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx` | Перезагрузка Nginx после продления сертификата |
 | `/srv/tproxy-site` | Сайт-заглушка по умолчанию |
 | `/usr/local/sbin/refresh-mtproxy-config` | Скрипт обновления конфигурации MTProxy |
 
-Также создаются systemd units и служебные пользователи `tproxy`, `mtproxy` и `caddy`.
+Также создаются systemd units и служебные пользователи для компонентов, которым они необходимы. Caddy и Nginx устанавливаются как альтернативные веб-серверы; одновременно для Web Proxy используется только один из них.
 
 ## Важные замечания по безопасности
 
@@ -321,7 +325,7 @@ sudo ./tgweb-install.sh restore /root/tproxy-backup.tar.gz
 ```
 
 - `diagnostics` запускает диагностику: состояние systemd-служб с указанием их unit-имён, проверку JSON-конфигураций, список слушающих TCP-портов и последние ошибки из журналов systemd.
-- `backup` архивирует конфигурации tproxy-server, MTProxy, выбранного веб-сервера (Caddy или Nginx), сертификаты Let's Encrypt и связанные systemd units. Архив создаётся с правами `0600`.
+- `backup` архивирует конфигурации tproxy-server, MTProxy, выбранного веб-сервера (Caddy или Nginx), сертификаты Let's Encrypt и связанные systemd units. В архив входят email Let's Encrypt и маркер выбранного веб-сервера. Архив создаётся с правами `0600`.
 - `restore` восстанавливает файлы из архива и выполняет `systemctl daemon-reload`. После восстановления проверь конфигурацию и состояние служб вручную.
 
 **Важно:** backup/restore сохраняет конфигурационные файлы, но не является автоматическим rollback обновления. Он не возвращает предыдущие бинарники, исходники upstream, пакеты или состояние firewall. Перед обновлением отдельно сохрани важные данные и проверь восстановление на тестовой машине.
