@@ -908,7 +908,7 @@ print_summary() {
   fi
   local proxy_secret; proxy_secret="$(web_proxy_secret)"
   local proxy_link="https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret"
-  : # QR-код не создаётся автоматически
+  generate_proxy_qr "$proxy_link"
   cat <<EOF
 
 ════════════════════════════════════════════════════════════════════
@@ -981,7 +981,7 @@ run_config() {
     proxy_secret="$(web_proxy_secret)"
     server="$host"; if [[ -n "$base" ]]; then server="$host/$base"; fi
     link="https://t.me/webproxy?server=${server//\//%2F}&secret=$proxy_secret"
-    : # QR содержит секрет и не создаётся автоматически
+    generate_proxy_qr "$link"
   fi
   local report
   report="$(cat <<EOF
@@ -1023,7 +1023,7 @@ EOF
   else
     printf '%s\n' "$report"
   fi
-  : # QR-код не создаётся автоматически
+  if [[ -n "$link" ]]; then print_proxy_qr_terminal "$link"; fi
 }
 
 load_existing_config() {
