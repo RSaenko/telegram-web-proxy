@@ -263,20 +263,20 @@ interactive_fill() {
   echo "  Заполни параметры. Enter оставляет значение по умолчанию."
 
   while :; do
-    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Домен (A-запись должна указывать на этот сервер): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
   while :; do
-    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
-  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  read -r -p "$(printf '%s›%s Base path [автоматически] (none — использовать корень домена): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
   if [[ -n "$input" ]]; then
     validate_base_path "$input" >/dev/null || die "Некорректный base path"
     BASE_PATH_ARG="$input"
@@ -1666,20 +1666,20 @@ interactive_fill() {
   echo "────────────────────────────────────────────────────────────"
 
   while :; do
-    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Домен (A-запись должна указывать на этот сервер): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
   while :; do
-    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
-  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  read -r -p "$(printf '%s›%s Base path [автоматически] (none — использовать корень домена): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
   if [[ -n "$input" ]]; then
     validate_base_path "$input" >/dev/null || die "Некорректный base path"
     BASE_PATH_ARG="$input"
@@ -3077,20 +3077,20 @@ interactive_fill() {
   echo "────────────────────────────────────────────────────────────"
 
   while :; do
-    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Домен (A-запись должна указывать на этот сервер): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
   while :; do
-    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
-  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  read -r -p "$(printf '%s›%s Base path [автоматически] (none — использовать корень домена): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
   if [[ -n "$input" ]]; then
     validate_base_path "$input" >/dev/null || die "Некорректный base path"
     BASE_PATH_ARG="$input"
@@ -4488,20 +4488,20 @@ interactive_fill() {
   echo "────────────────────────────────────────────────────────────"
 
   while :; do
-    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Домен (A-запись должна указывать на этот сервер): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
   while :; do
-    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
-  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  read -r -p "$(printf '%s›%s Base path [автоматически] (none — использовать корень домена): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
   if [[ -n "$input" ]]; then
     validate_base_path "$input" >/dev/null || die "Некорректный base path"
     BASE_PATH_ARG="$input"
@@ -5899,20 +5899,20 @@ interactive_fill() {
   echo "────────────────────────────────────────────────────────────"
 
   while :; do
-    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Домен (A-запись должна указывать на этот сервер): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
   while :; do
-    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
-  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  read -r -p "$(printf '%s›%s Base path [автоматически] (none — использовать корень домена): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
   if [[ -n "$input" ]]; then
     validate_base_path "$input" >/dev/null || die "Некорректный base path"
     BASE_PATH_ARG="$input"
@@ -7327,20 +7327,20 @@ interactive_fill() {
   echo "────────────────────────────────────────────────────────────"
 
   while :; do
-    read -r -p "Домен (A-запись должна указывать на этот сервер): " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Домен (A-запись должна указывать на этот сервер): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
   while :; do
-    read -r -p "Email для Let's Encrypt: " input || die "ввод прерван"
+    read -r -p "$(printf '%s›%s Email для Let\'s Encrypt: ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи email"; continue; }
     if err="$(validate_email "$input")"; then EMAIL_ARG="$input"; break; fi
     echo "  ⚠️  $err"
   done
 
-  read -r -p "Base path [автоматически] (none — использовать корень домена): " input || die "ввод прерван"
+  read -r -p "$(printf '%s›%s Base path [автоматически] (none — использовать корень домена): ' "$UI_CYAN" "$UI_RESET")" input || die "ввод прерван"
   if [[ -n "$input" ]]; then
     validate_base_path "$input" >/dev/null || die "Некорректный base path"
     BASE_PATH_ARG="$input"
