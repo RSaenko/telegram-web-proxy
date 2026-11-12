@@ -993,6 +993,9 @@ load_existing_config() {
   v="$(jq -r '.public_dir // empty' "$cfg")"; [[ -n "$v" ]] && SITE_DIR="$v"
   v="$(jq -er '.profiles[0].secret | select(type == "string" and length > 0)' "$profiles")" || die "Не удалось прочитать секрет"
   [[ -n "$SECRET_ARG" ]] || SECRET_ARG="$v"
+  if [[ "$SECRET_PREFIX_MODE_SET" -eq 0 ]]; then
+    if [[ "$SECRET_ARG" == dd* ]]; then SECRET_PREFIX_MODE="dd"; else SECRET_PREFIX_MODE="plain"; fi
+  fi
   v="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"; [[ -n "$WORKERS_ARG" ]] || WORKERS_ARG="${v:-1}"
   v="$(sed -n 's/^MTPROXY_MAX_CONNECTIONS=//p' "$envf" | head -n1)"; [[ -n "$MAXCONN_ARG" ]] || MAXCONN_ARG="${v:-4096}"
   if [[ -r "$dropin" ]]; then
@@ -1049,6 +1052,10 @@ prompt_update_secret() {
 
 interactive_update_fill() {
   load_existing_config
+  if [[ "$NONINTERACTIVE" == "1" ]]; then
+    [[ "$RELAY_PORT" != "$ADMIN_PORT" ]] || die "relay- и admin-порты должны различаться"
+    return 0
+  fi
   echo
   echo "────────────────────────────────────────────────────────────"
   echo "  Обновление tproxy-server"
