@@ -15,6 +15,7 @@ umask 077
 
 # ----------------------------- константы ------------------------------------
 readonly REPO_URL="https://github.com/telegramdesktop/tproxy-server.git"
+readonly UPSTREAM_COMMIT="c8adb8b7c6b7fc46c12ae3acb68be9070c26a8e8"
 readonly REPO_DIR="/opt/tproxy-server"
 readonly SITE_DIR_DEFAULT="/srv/tproxy-site"
 readonly GO_FALLBACK_VERSION="1.26.5"
@@ -23,13 +24,15 @@ readonly CADDY_VERSION="2.11.4"
 readonly CADDY_SHA512="8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9"
 readonly DEFAULT_PORT=8080
 readonly DEFAULT_ADMIN_PORT=8081
-readonly PURGE_PACKAGES=(nftables git jq netcat-openbsd dnsutils build-essential)
+readonly PURGE_PACKAGES=(nftables git jq netcat-openbsd dnsutils build-essential qrencode)
 
 # ----------------------------- переменные -----------------------------------
 MODE=""
 HOSTNAME_ARG=""
 EMAIL_ARG=""
 SECRET_ARG=""
+SECRET_PREFIX_MODE="plain"
+SECRET_PREFIX_MODE_SET=0
 BASE_PATH_ARG=""
 SITE_DIR="$SITE_DIR_DEFAULT"
 INSTALL_SITE=1
@@ -61,7 +64,9 @@ Usage:
 Опции установки/обновления:
   --hostname FQDN           Домен
   --email EMAIL             Email для Let's Encrypt
-  --secret 32hex            MTProxy-секрет (32 hex)
+  --secret SECRET           32 hex или dd + 32 hex
+  --secret-prefix MODE       plain или dd (формат генерации)
+  config [--output PATH]     Показать текущие настройки и ссылки
   --base-path SLUG|none     Базовый путь (default: генерируется)
   --site-dir PATH           Каталог сайта (default: /srv/tproxy-site)
   --no-site                 Не устанавливать сайт
@@ -171,14 +176,25 @@ confirm() {
 
 prompt_secret() {
   if [[ -n "$SECRET_ARG" ]]; then return 0; fi
-  local choice
+  local choice format_choice
   echo
   echo "Секрет MTProxy — 32 hex (16 байт), можно с префиксом dd."
+  if [[ "$SECRET_PREFIX_MODE_SET" -eq 0 ]]; then
+    local default_choice=1
+    [[ "$SECRET_PREFIX_MODE" == "dd" ]] && default_choice=2
+    read -r -p "Формат секрета: [1] обычный  [2] dd-префикс: " format_choice
+    case "${format_choice:-$default_choice}" in
+      1) SECRET_PREFIX_MODE="plain" ;;
+      2) SECRET_PREFIX_MODE="dd" ;;
+      *) die "Выбери 1 или 2" ;;
+    esac
+  fi
   while :; do
     read -r -p "Сгенерировать? [Y] / ввести свой [n]: " choice
     choice="${choice:-Y}"
     if [[ "$choice" =~ ^[YyДд] ]]; then
       SECRET_ARG="$(openssl rand -hex 16)"
+      [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd${SECRET_ARG}"
       info "Секрет: $SECRET_ARG"
       return 0
     fi
@@ -205,6 +221,11 @@ interactive_fill() {
     [[ $need_email -eq 0 ]] || die "--email обязателен в non-interactive"
     [[ $need_port  -eq 0 ]] || die "--port обязателен в non-interactive"
     [[ $need_admin -eq 0 ]] || die "--admin-port обязателен в non-interactive"
+    if [[ -z "$SECRET_ARG" ]]; then
+      SECRET_ARG="$(openssl rand -hex 16)"
+      [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd${SECRET_ARG}"
+    fi
+    validate_secret "$SECRET_ARG" >/dev/null || die "невалидный секрет"
     return 0
   fi
 
@@ -256,7 +277,8 @@ parse_install_args() {
     case "$1" in
       --hostname)        HOSTNAME_ARG="$2";  shift 2 ;;
       --email)           EMAIL_ARG="$2";     shift 2 ;;
-      --secret)          SECRET_ARG="$2";    shift 2 ;;
+      --secret)          [[ $# -ge 2 ]] || die "--secret требует значение"; SECRET_ARG="$2"; shift 2 ;;
+      --secret-prefix)   [[ $# -ge 2 ]] || die "--secret-prefix требует plain|dd"; SECRET_PREFIX_MODE="$2"; SECRET_PREFIX_MODE_SET=1; shift 2 ;;
       --base-path)       BASE_PATH_ARG="$2"; shift 2 ;;
       --site-dir)        SITE_DIR="$2";      shift 2 ;;
       --no-site)         INSTALL_SITE=0;     shift ;;
@@ -275,6 +297,7 @@ parse_install_args() {
   if [[ -n "$EMAIL_ARG" ]]; then
     validate_email "$EMAIL_ARG" >/dev/null || die "невалидный email"
   fi
+  [[ "$SECRET_PREFIX_MODE" == "plain" || "$SECRET_PREFIX_MODE" == "dd" ]] || die "--secret-prefix: допустимо plain или dd"
   if [[ -n "$SECRET_ARG" ]]; then
     validate_secret "$SECRET_ARG" >/dev/null || die "невалидный --secret"
   fi
@@ -331,7 +354,7 @@ install_deps() {
   info "apt update + базовые пакеты…"
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    ca-certificates curl nftables openssl coreutils dnsutils netcat-openbsd jq git build-essential
+    ca-certificates curl nftables openssl coreutils dnsutils netcat-openbsd jq git build-essential qrencode
   ok "Базовые пакеты установлены"
 }
 
@@ -345,16 +368,24 @@ check_dns() {
 
 fetch_repo() {
   if [[ -d "$REPO_DIR/.git" ]]; then
-    info "Обновляю $REPO_DIR"
-    git -C "$REPO_DIR" fetch --depth=1 origin HEAD
-    git -C "$REPO_DIR" reset --hard FETCH_HEAD
+    info "Получаю зафиксированную версию $UPSTREAM_COMMIT"
+    git -C "$REPO_DIR" fetch --depth=1 origin "$UPSTREAM_COMMIT"
+    git -C "$REPO_DIR" checkout --detach FETCH_HEAD
+    git -C "$REPO_DIR" reset --hard "$UPSTREAM_COMMIT"
   else
-    info "Клонирую $REPO_URL"
+    info "Клонирую $REPO_URL на зафиксированном commit $UPSTREAM_COMMIT"
     rm -rf "$REPO_DIR"
-    git clone --depth=1 "$REPO_URL" "$REPO_DIR"
+    install -d -m 0755 "$REPO_DIR"
+    git -C "$REPO_DIR" init
+    git -C "$REPO_DIR" remote add origin "$REPO_URL"
+    git -C "$REPO_DIR" fetch --depth=1 origin "$UPSTREAM_COMMIT"
+    git -C "$REPO_DIR" checkout --detach FETCH_HEAD
   fi
+  local actual_commit
+  actual_commit="$(git -C "$REPO_DIR" rev-parse HEAD)"
+  [[ "$actual_commit" == "$UPSTREAM_COMMIT" ]] || die "Версия tproxy-server не совпадает с закреплённым commit"
   [[ -x "$REPO_DIR/deploy/install-mtproxy.sh" ]] || die "install-mtproxy.sh не найден"
-  ok "Репозиторий: $(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  ok "Репозиторий: $(git -C "$REPO_DIR" rev-parse --short HEAD) (pinned)"
 }
 
 resolve_base_path() {
@@ -845,12 +876,35 @@ web_proxy_secret() {
   } | base64 | tr '+/' '-_' | tr -d '=\n'
 }
 
+generate_proxy_qr() {
+  local link="$1" qr_file="${2:-/etc/tproxy-server/proxy-qr.png}"
+  command -v qrencode >/dev/null 2>&1 || die "qrencode не установлен"
+  install -d -m 0750 /etc/tproxy-server
+  qrencode -o "$qr_file" -t PNG -s 8 -m 2 "$link"
+  chmod 0600 "$qr_file"
+  chown root:root "$qr_file"
+  ok "QR-код сохранён: $qr_file (права 0600)"
+}
+
+print_proxy_qr_terminal() {
+  local link="$1"
+  [[ -n "$link" ]] || return 0
+  command -v qrencode >/dev/null 2>&1 || die "qrencode не установлен"
+  echo
+  echo "QR-код для подключения (отсканируй камерой телефона):"
+  qrencode -t ANSIUTF8 -m 2 "$link"
+  echo "PNG-файл QR-кода сохранён: /etc/tproxy-server/proxy-qr.png"
+  echo
+}
+
 print_summary() {
   local client_address="$HOSTNAME_ARG"
   if [[ -n "$BASE_PATH_ARG" ]]; then
     client_address="$HOSTNAME_ARG/$BASE_PATH_ARG"
   fi
   local proxy_secret; proxy_secret="$(web_proxy_secret)"
+  local proxy_link="https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret"
+  generate_proxy_qr "$proxy_link"
   cat <<EOF
 
 ════════════════════════════════════════════════════════════════════
@@ -865,21 +919,236 @@ print_summary() {
  Internal secret: $SECRET_ARG
  Proxy server:    $client_address
  Proxy secret:    $proxy_secret
- Proxy link:      https://t.me/webproxy?server=${client_address//\//%2F}&secret=$proxy_secret
+ Proxy link:      $proxy_link
+ QR image:        /etc/tproxy-server/proxy-qr.png
 
  Проверка:
    curl -fsS http://127.0.0.1:$ADMIN_PORT/healthz
    curl -fsS http://127.0.0.1:$ADMIN_PORT/readyz
    curl -fsS https://$HOSTNAME_ARG/
+
+ Firewall — разрешить входящие TCP:
+   • 80/tcp  — HTTP (редирект и ACME/Let's Encrypt)
+   • 443/tcp — HTTPS (сайт и Web Proxy)
+
+ Не открывать наружу:
+   • $RELAY_PORT/tcp — relay слушает только 127.0.0.1
+   • $ADMIN_PORT/tcp — admin/health слушает только 127.0.0.1
+   • 2398/tcp и 8888/tcp — внутренние порты MTProxy,
+     блокируются локальным firewall tproxy_backend.
+
+ Правило относится и к firewall сервера, и к firewall
+ провайдера/VPS (Security Group). UDP для этой конфигурации
+ открывать не требуется.
 ════════════════════════════════════════════════════════════════════
 EOF
+  print_proxy_qr_terminal "$proxy_link"
+}
+
+
+run_config() {
+  local cfg=/etc/tproxy-server/config.json profiles=/etc/tproxy-server/profiles.json
+  local envf=/etc/mtproxy/mtproxy.env host="" base="" relay="" admin="" public_dir=""
+  local backend="" secret="" workers="" maxconn="" nat="" proxy_secret="" server="" link="" output=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output) [[ $# -ge 2 ]] || die "--output требует путь"; output="$2"; shift 2 ;;
+      *) die "Неизвестная опция config: $1" ;;
+    esac
+  done
+  if [[ -r "$cfg" ]] && command -v jq >/dev/null 2>&1; then
+    host="$(jq -r '.public_hostname // empty' "$cfg")"
+    base="$(jq -r '.base_path // empty' "$cfg")"
+    relay="$(jq -r '.listen // empty' "$cfg")"
+    admin="$(jq -r '.admin_listen // empty' "$cfg")"
+    public_dir="$(jq -r '.public_dir // empty' "$cfg")"
+  fi
+  if [[ -r "$profiles" ]] && command -v jq >/dev/null 2>&1; then
+    secret="$(jq -r '.profiles[0].secret // empty' "$profiles")"
+    backend="$(jq -r '.profiles[0].backend // empty' "$profiles")"
+  fi
+  if [[ -r "$envf" ]]; then
+    workers="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"
+    maxconn="$(sed -n 's/^MTPROXY_MAX_CONNECTIONS=//p' "$envf" | head -n1)"
+    nat="$(sed -n 's/^MTPROXY_NAT_ARGS=//p' "$envf" | head -n1)"
+  fi
+  if [[ -n "$host" && -n "$secret" ]]; then
+    BASE_PATH_ARG="$base"; SECRET_ARG="$secret"
+    proxy_secret="$(web_proxy_secret)"
+    server="$host"; if [[ -n "$base" ]]; then server="$host/$base"; fi
+    link="https://t.me/webproxy?server=${server//\//%2F}&secret=$proxy_secret"
+    generate_proxy_qr "$link"
+  fi
+  local report
+  report="$(cat <<EOF
+==================== ТЕКУЩАЯ КОНФИГУРАЦИЯ ====================
+Домен                  : ${host:-<не задан>}
+Base path              : ${base:-<root / не задан>}
+Relay listen           : ${relay:-<не задан>}
+Admin listen           : ${admin:-<не задан>}
+MTProxy backend        : ${backend:-<не задан>}
+Публичный каталог      : ${public_dir:-<не задан>}
+Каталог сайта          : ${public_dir:-$SITE_DIR_DEFAULT}
+Конфигурация relay     : $cfg
+Профили                : $profiles
+Переменные MTProxy     : $envf
+Workers                : ${workers:-<не задан>}
+Max connections        : ${maxconn:-<не задан>}
+NAT args               : ${nat:-<не задан>}
+Секрет клиента         : ${secret:-<не задан>}
+Формат секрета         : $(if [[ "$secret" == dd* ]]; then echo "dd + 32 hex"; elif [[ -n "$secret" ]]; then echo "32 hex"; else echo "<не задан>"; fi)
+
+Слушающие TCP-порты:
+$(ss -lntp 2>/dev/null || true)
+
+Состояние служб:
+$(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer caddy; do
+  printf '  %-28s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || echo unknown)"
+done)
+
+Ссылки подключения:
+${link:-<не удалось сформировать: проверь config.json и profiles.json>}
+QR-код (PNG)          : ${link:+/etc/tproxy-server/proxy-qr.png}
+==============================================================
+EOF
+)"
+  if [[ -n "$output" ]]; then
+    install -m 0600 /dev/null "$output"
+    printf '%s\n' "$report" > "$output"
+    echo "Конфигурация сохранена: $output (0600)"
+  else
+    printf '%s\n' "$report"
+  fi
+  [[ -n "$link" ]] && print_proxy_qr_terminal "$link"
+}
+
+load_existing_config() {
+  local cfg=/etc/tproxy-server/config.json profiles=/etc/tproxy-server/profiles.json
+  local envf=/etc/mtproxy/mtproxy.env dropin=/etc/systemd/system/caddy.service.d/tproxy.conf v
+  [[ -r "$cfg" && -r "$profiles" && -r "$envf" ]] || die "Не найдена полная установленная конфигурация; сначала выполни config"
+  command -v jq >/dev/null 2>&1 || die "Для чтения настроек нужен jq"
+  v="$(jq -er '.public_hostname | select(type == "string" and length > 0)' "$cfg")" || die "Не удалось прочитать hostname"
+  [[ -n "$HOSTNAME_ARG" ]] || HOSTNAME_ARG="$v"
+  v="$(jq -r '.base_path // "none"' "$cfg")"; [[ -n "$BASE_PATH_ARG" ]] || BASE_PATH_ARG="$v"
+  v="$(jq -r '.listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$RELAY_PORT" ]] || RELAY_PORT="$v"
+  v="$(jq -r '.admin_listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$ADMIN_PORT" ]] || ADMIN_PORT="$v"
+  v="$(jq -r '.public_dir // empty' "$cfg")"; [[ -n "$v" ]] && SITE_DIR="$v"
+  v="$(jq -er '.profiles[0].secret | select(type == "string" and length > 0)' "$profiles")" || die "Не удалось прочитать секрет"
+  [[ -n "$SECRET_ARG" ]] || SECRET_ARG="$v"
+  if [[ "$SECRET_PREFIX_MODE_SET" -eq 0 ]]; then
+    if [[ "$SECRET_ARG" == dd* ]]; then SECRET_PREFIX_MODE="dd"; else SECRET_PREFIX_MODE="plain"; fi
+  fi
+  v="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"; [[ -n "$WORKERS_ARG" ]] || WORKERS_ARG="${v:-1}"
+  v="$(sed -n 's/^MTPROXY_MAX_CONNECTIONS=//p' "$envf" | head -n1)"; [[ -n "$MAXCONN_ARG" ]] || MAXCONN_ARG="${v:-4096}"
+  if [[ -r "$dropin" ]]; then
+    v="$(sed -n 's/^Environment=ACME_EMAIL=//p' "$dropin" | head -n1)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  [[ -n "$EMAIL_ARG" ]] || die "Не удалось прочитать email из $dropin; укажи --email"
+  validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
+  validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
+  validate_port "$RELAY_PORT" >/dev/null || die "Некорректный текущий relay-порт"
+  validate_port "$ADMIN_PORT" >/dev/null || die "Некорректный текущий admin-порт"
+  validate_secret "$SECRET_ARG" >/dev/null || die "Некорректный текущий секрет"
+  validate_base_path "$BASE_PATH_ARG" >/dev/null || die "Некорректный текущий base_path"
+}
+
+prompt_update_value() {
+  local var="$1" label="$2" current="$3" validator="$4" input err
+  while :; do
+    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$current}"
+    if err="$("$validator" "$input")"; then printf -v "$var" '%s' "$input"; return 0; fi
+    echo "  ⚠️  $err — попробуй ещё раз"
+  done
+}
+
+prompt_update_port() {
+  local var="$1" label="$2" current="$3" input err
+  while :; do
+    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$current}"
+    if ! err="$(validate_port "$input")"; then echo "  ⚠️  $err"; continue; fi
+    if [[ "$input" != "$current" ]] && port_in_use "$input"; then echo "  ⚠️  порт $input уже занят"; continue; fi
+    printf -v "$var" '%s' "$input"; return 0
+  done
+}
+
+prompt_update_secret() {
+  local answer s1 s2
+  read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
+  [[ "$answer" =~ ^[Nn]$ ]] || return 0
+  while :; do
+    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    if [[ -z "$s1" ]]; then
+      SECRET_ARG="$(openssl rand -hex 16)"
+      [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
+      info "Сгенерирован новый секрет"; return 0
+    fi
+    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
+    validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
+    SECRET_ARG="$s1"; return 0
+  done
+}
+
+interactive_update_fill() {
+  load_existing_config
+  if [[ "$NONINTERACTIVE" == "1" ]]; then
+    [[ "$RELAY_PORT" != "$ADMIN_PORT" ]] || die "relay- и admin-порты должны различаться"
+    return 0
+  fi
+  echo
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Обновление tproxy-server"
+  echo "  Текущие значения указаны в [квадратных скобках]."
+  echo "  Enter — оставить без изменений."
+  echo "────────────────────────────────────────────────────────────"
+  prompt_update_value HOSTNAME_ARG "Домен" "$HOSTNAME_ARG" validate_hostname
+  prompt_update_value EMAIL_ARG "Email Let's Encrypt" "$EMAIL_ARG" validate_email
+  prompt_update_value BASE_PATH_ARG "Base path (none — корень)" "$BASE_PATH_ARG" validate_base_path
+  prompt_update_port RELAY_PORT "Relay-порт" "$RELAY_PORT"
+  prompt_update_port ADMIN_PORT "Admin-порт" "$ADMIN_PORT"
+  [[ "$RELAY_PORT" != "$ADMIN_PORT" ]] || die "relay- и admin-порты должны различаться"
+  prompt_update_secret
+
+  local input
+  while :; do
+    read -r -p "MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$WORKERS_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
+    echo "  ⚠️  workers должен быть числом от 1 до 256"
+  done
+  while :; do
+    read -r -p "MTProxy max connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$MAXCONN_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
+    echo "  ⚠️  max connections должен быть положительным числом"
+  done
+
+  echo
+  echo "Итоговые параметры:"
+  echo "  Домен      : $HOSTNAME_ARG"
+  echo "  Email      : $EMAIL_ARG"
+  echo "  Base path  : $BASE_PATH_ARG"
+  echo "  Relay port : $RELAY_PORT"
+  echo "  Admin port : $ADMIN_PORT"
+  echo "  Секрет     : сохранён / изменён (значение скрыто)"
+  echo "  Workers    : $WORKERS_ARG"
+  echo "  Max conns  : $MAXCONN_ARG"
+  echo "  Каталог    : $SITE_DIR"
+  confirm "Применить обновление?" || die "обновление отменено"
 }
 
 run_install() {
   require_root
   check_arch
   check_os
-  interactive_fill
+  if [[ "$MODE" == "update" ]]; then
+    interactive_update_fill
+  else
+    interactive_fill
+  fi
   install_deps
   check_dns
   fetch_repo
@@ -990,16 +1259,18 @@ show_menu() {
   echo "  2) Обновить (без пересоздания существующих сервисов)"
   echo "  3) Удалить tproxy-server (Caddy оставить)"
   echo "  4) Удалить всё, включая пакеты"
-  echo "  5) Выход"
+  echo "  5) Просмотреть текущую конфигурацию"
+  echo "  6) Выход"
   echo
   local choice
-  read -r -p "Выбор [1-5]: " choice
+  read -r -p "Выбор [1-6]: " choice
   case "$choice" in
     1) MODE=install ;;
     2) MODE=update; SKIP_TESTS=1 ;;
     3) MODE=uninstall; KEEP_CADDY=1 ;;
     4) MODE=purge ;;
-    5) exit 0 ;;
+    5) MODE=config ;;
+    6) exit 0 ;;
     *) die "Неверный выбор" ;;
   esac
 }
@@ -1018,8 +1289,9 @@ main() {
       update)    SKIP_TESTS=1; parse_install_args "$@" ;;
       uninstall) parse_uninstall_args "$@" ;;
       purge)     parse_uninstall_args "$@" ;;
+      config)    : ;;
       -h|--help|help) usage ;;
-      *) die "Unknown mode: $MODE (install|update|uninstall|purge)" ;;
+      *) die "Unknown mode: $MODE (install|update|uninstall|purge|config)" ;;
     esac
   fi
 
@@ -1028,6 +1300,7 @@ main() {
     update)    run_install ;;
     uninstall) run_uninstall ;;
     purge)     run_purge ;;
+    config)    require_root; run_config "$@" ;;
   esac
 }
 
