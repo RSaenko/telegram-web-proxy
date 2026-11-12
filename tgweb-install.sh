@@ -1306,37 +1306,48 @@ restore_command() {
   ok "Конфигурации восстановлены. Проверь их и перезапусти службы вручную."
 }
 show_tools_menu() {
-  echo
-  echo "════════════════════════════════════════════════════════════"
-  echo "  Инструменты"
-  echo "════════════════════════════════════════════════════════════"
-  echo "  1) Статус служб и портов"
-  echo "  2) Диагностика"
-  echo "  3) Создать резервную копию"
-  echo "  4) Восстановить резервную копию"
-  echo "  5) Назад"
-  echo
   local choice archive
-  read -r -p "Выбор [1-5]: " choice
-  case "$choice" in
-    1) MODE=status ;;
-    2) MODE=diagnostics ;;
-    3)
-      read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
-      MODE=backup
-      TOOL_ARG="$archive"
-      ;;
-    4)
-      read -r -p "Абсолютный путь к архиву: " archive
-      [[ -n "$archive" ]] || die "Путь к архиву не указан"
-      MODE=restore
-      TOOL_ARG="$archive"
-      ;;
-    5) show_menu ;;
-    *) die "Неверный выбор" ;;
-  esac
+  while true; do
+    echo
+    echo "════════════════════════════════════════════════════════════"
+    echo "  Инструменты"
+    echo "════════════════════════════════════════════════════════════"
+    echo "  1) Статус служб и портов"
+    echo "  2) Диагностика"
+    echo "  3) Создать резервную копию"
+    echo "  4) Восстановить резервную копию"
+    echo "  5) Назад"
+    echo
+    read -r -p "Выбор [1-5]: " choice
+    case "$choice" in
+      1)
+        require_root
+        status_command
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      2)
+        require_root
+        diagnostics_command
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      3)
+        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        require_root
+        if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      4)
+        read -r -p "Абсолютный путь к архиву: " archive
+        [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
+        require_root
+        restore_command "$archive"
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      5) return 0 ;;
+      *) warn "Неверный выбор" ;;
+    esac
+  done
 }
-
 show_menu() {
   echo
   echo "════════════════════════════════════════════════════════════"
@@ -1358,7 +1369,7 @@ show_menu() {
     3) MODE=uninstall; KEEP_CADDY=1 ;;
     4) MODE=purge ;;
     5) MODE=config ;;
-    6) show_tools_menu ;;
+    6) MODE=tools ;;
     7) exit 0 ;;
     *) die "Неверный выбор" ;;
   esac
@@ -1370,30 +1381,52 @@ show_menu() {
 
 main() {
   if [[ $# -eq 0 ]]; then
-    show_menu
-  else
-    MODE="$1"; shift
-    case "$MODE" in
-      install)   parse_install_args "$@" ;;
-      update)    SKIP_TESTS=1; parse_install_args "$@" ;;
-      uninstall) parse_uninstall_args "$@" ;;
-      purge)     parse_uninstall_args "$@" ;;
-      config|status|diagnostics|backup|restore) : ;;
-      -h|--help|help) usage; exit 0 ;;
-      *) die "Unknown mode: $MODE (install|update|uninstall|purge|config)" ;;
-    esac
+    while true; do
+      MODE=""
+      TOOL_ARG=""
+      show_menu
+      case "$MODE" in
+        tools)
+          show_tools_menu
+          ;;
+        config)
+          require_root
+          run_config
+          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          ;;
+        install)
+          run_install
+          return 0
+          ;;
+        update)
+          run_install
+          return 0
+          ;;
+        uninstall)
+          run_uninstall
+          return 0
+          ;;
+        purge)
+          run_purge
+          return 0
+          ;;
+      esac
+    done
   fi
 
+  MODE="$1"; shift
   case "$MODE" in
-    install)   run_install ;;
-    update)    run_install ;;
-    uninstall) run_uninstall ;;
-    purge)     run_purge ;;
-    config)      require_root; run_config "$@" ;;
-    status)      require_root; status_command ;;
+    install)   parse_install_args "$@"; run_install ;;
+    update)    SKIP_TESTS=1; parse_install_args "$@"; run_install ;;
+    uninstall) parse_uninstall_args "$@"; run_uninstall ;;
+    purge)     parse_uninstall_args "$@"; run_purge ;;
+    config)    require_root; run_config "$@" ;;
+    status)    require_root; status_command ;;
     diagnostics) require_root; diagnostics_command ;;
-    backup)      require_root; if [[ -n "${TOOL_ARG:-}" ]]; then backup_command "$TOOL_ARG"; else backup_command "$@"; fi ;;
-    restore)     require_root; if [[ -n "${TOOL_ARG:-}" ]]; then restore_command "$TOOL_ARG"; else restore_command "$@"; fi ;;
+    backup)    require_root; backup_command "$@" ;;
+    restore)   require_root; restore_command "$@" ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) die "Unknown mode: $MODE (install|update|uninstall|purge|config|status|diagnostics|backup|restore)" ;;
   esac
 }
 
