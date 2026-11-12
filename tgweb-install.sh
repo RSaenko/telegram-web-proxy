@@ -977,7 +977,7 @@ run_config() {
     proxy_secret="$(web_proxy_secret)"
     server="$host"; if [[ -n "$base" ]]; then server="$host/$base"; fi
     link="https://t.me/webproxy?server=${server//\//%2F}&secret=$proxy_secret"
-    generate_proxy_qr "$link"
+    : # QR содержит секрет и не создаётся автоматически
   fi
   local report
   report="$(cat <<EOF
@@ -995,7 +995,7 @@ MTProxy backend        : ${backend:-<не задан>}
 Workers                : ${workers:-<не задан>}
 Max connections        : ${maxconn:-<не задан>}
 NAT args               : ${nat:-<не задан>}
-Секрет клиента         : ${secret:-<не задан>}
+Секрет клиента         : [скрыт]
 Формат секрета         : $(if [[ "$secret" == dd* ]]; then echo "dd + 32 hex"; elif [[ -n "$secret" ]]; then echo "32 hex"; else echo "<не задан>"; fi)
 
 Слушающие TCP-порты:
@@ -1007,7 +1007,7 @@ $(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer ca
 done)
 
 Ссылки подключения:
-${link:-<не удалось сформировать: проверь config.json и profiles.json>}
+[ссылка скрыта; секрет не выводится]
 QR-код (PNG)          : ${link:+/etc/tproxy-server/proxy-qr.png}
 ==============================================================
 EOF
@@ -1019,7 +1019,7 @@ EOF
   else
     printf '%s\n' "$report"
   fi
-  [[ -n "$link" ]] && print_proxy_qr_terminal "$link"
+  : # QR и секреты не выводятся автоматически
 }
 
 load_existing_config() {
