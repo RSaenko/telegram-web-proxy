@@ -408,12 +408,44 @@ install_nginx_packages() {
   ok "Nginx и Certbot установлены"
 }
 
+get_public_ipv4() {
+  local candidate
+  for probe in https://api.ipify.org https://ifconfig.co/ip https://icanhazip.com; do
+    candidate="$(curl --fail --silent --location --ipv4 --max-time 8 \
+      --proto '=https' --proto-redir '=https' --tlsv1.2 "$probe" 2>/dev/null | tr -d '[:space:]')" || continue
+    if [[ "$candidate" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 check_dns() {
-  info "A-запись $HOSTNAME_ARG…"
-  local ip
-  ip="$(dig +short A "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | tail -n1)"
-  [[ -n "$ip" ]] || die "A-запись для $HOSTNAME_ARG не резолвится"
-  ok "A-запись $HOSTNAME_ARG → $ip"
+  info "Проверяю DNS для $HOSTNAME_ARG…"
+  local -a ips=()
+  local public_ip="" matched=0 ip aaaa
+  mapfile -t ips < <(dig +short A "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' | sort -u)
+  (("${#ips[@]}")) || die "A-запись для $HOSTNAME_ARG не найдена через 1.1.1.1"
+
+  if public_ip="$(get_public_ipv4)"; then
+    for ip in "${ips[@]}"; do [[ "$ip" == "$public_ip" ]] && matched=1; done
+    (( matched )) || die "DNS A-запись (${ips[*]}) не указывает на публичный IPv4 сервера ($public_ip)"
+    ok "DNS A-запись совпадает с публичным IP сервера: $public_ip"
+  else
+    warn "Не удалось определить публичный IPv4 сервера; A-записи: ${ips[*]}. Сравнение пропущено."
+  fi
+
+  aaaa="$(dig +short AAAA "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep ':' | sort -u | tr '\\n' ' ' || true)"
+  if [[ -n "$aaaa" ]]; then
+    if ip -6 route get 2606:4700:4700::1111 2>/dev/null | grep -q 'src'; then
+      warn "Для домена есть AAAA-запись ($aaaa). Проверь, что IPv6 сервера совпадает с ней и TCP 80/443 доступны по IPv6."
+    else
+      warn "Для домена есть AAAA-запись ($aaaa), но у сервера не обнаружен рабочий IPv6-маршрут. Удали AAAA или настрой IPv6."
+    fi
+  else
+    ok "AAAA-запись не задана"
+  fi
 }
 
 fetch_repo() {
@@ -814,10 +846,10 @@ CSS
 </svg>
 SVG
 
-  chown root:root "$SITE_DIR" "$SITE_DIR/index.html"
-  chmod 0755 "$SITE_DIR"
-  chmod 0644 "$SITE_DIR/index.html"
-  ok "Сайт-заглушка установлен в $SITE_DIR"
+  chown -R root:root "$SITE_DIR"
+  find "$SITE_DIR" -type d -exec chmod 0755 {} +
+  find "$SITE_DIR" -type f -exec chmod 0644 {} +
+  ok "Сайт-заглушка установлена в $SITE_DIR; каталоги 0755, файлы 0644"
 }
 
 ensure_tproxy_user() {
@@ -1496,78 +1528,127 @@ run_purge() {
 # ============================================================================
 
 diagnostics_command() {
-  local failed=0 svc state file port_output log_output web_server
+  local failed=0 warnings=0 svc state file web_server host relay admin backend backend_port cert_path expiry
   web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
-  [[ "$web_server" == "nginx" || "$web_server" == "caddy" ]] || { if systemctl is-enabled --quiet nginx 2>/dev/null; then web_server=nginx; else web_server=caddy; fi; }
-  local -a services=("tproxy-server:Основной прокси (tproxy-server)" "mtproxy:Прокси MTProxy (mtproxy)" "tproxy-firewall:Сетевой экран (tproxy-firewall)" "refresh-mtproxy-config.timer:Таймер обновления конфигурации (refresh-mtproxy-config.timer)" "$web_server:Веб-сервер и HTTPS ($web_server)")
-  local -a configs=(/etc/tproxy-server/config.json /etc/tproxy-server/profiles.json)
+  [[ "$web_server" == "nginx" || "$web_server" == "caddy" ]] || {
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then web_server=nginx; else web_server=caddy; fi
+  }
+  host="$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null || true)"
+  relay="$(jq -r '.listen // empty' /etc/tproxy-server/config.json 2>/dev/null || true)"
+  admin="$(jq -r '.admin_listen // empty' /etc/tproxy-server/config.json 2>/dev/null || true)"
+  backend="$(jq -r '.profiles[0].backend // empty' /etc/tproxy-server/profiles.json 2>/dev/null || true)"
+  backend_port="${backend##*:}"
 
   echo
   echo "------------------------------------------------------------"
-  echo "  ДИАГНОСТИКА СЕРВЕРА"
+  echo "  РАСШИРЕННАЯ ДИАГНОСТИКА СЕРВЕРА"
   echo "------------------------------------------------------------"
 
   echo
   echo "1. Состояние служб"
-  for svc in "${services[@]}"; do
-    local unit="${svc%%:*}" label="${svc#*:}"
-    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    if [[ "$state" == "active" ]]; then
-      printf "  [✓] %-14s %s\n" "работает" "$label"
+  for svc in tproxy-server mtproxy tproxy-firewall refresh-mtproxy-config.timer "$web_server"; do
+    state="$(systemctl is-active "$svc" 2>/dev/null || true)"
+    if [[ "$state" == active ]]; then
+      printf "  [✓] %-30s active\n" "$svc"
     else
-      printf "  [✗] %-14s %s\n" "${state:-неизвестно}" "$label"
+      printf "  [✗] %-30s %s\n" "$svc" "${state:-unknown}"
       failed=1
     fi
   done
 
   echo
-  echo "2. Файлы конфигурации"
-  for file in "${configs[@]}"; do
+  echo "2. Конфигурационные файлы и права"
+  for file in /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json /etc/mtproxy/mtproxy.env; do
     if [[ ! -f "$file" ]]; then
-      printf "  [✗] %s — файл не найден\n" "$file"
-      failed=1
-    elif [[ ! -r "$file" ]]; then
-      printf "  [✗] %s — нет прав на чтение\n" "$file"
-      failed=1
-    elif jq empty "$file" >/dev/null 2>&1; then
-      printf "  [✓] %s — JSON корректен\n" "$file"
-      stat -c '      Права: %a, владелец: %U:%G' "$file" 2>/dev/null || true
+      echo "  [✗] $file — отсутствует"; failed=1
+    elif [[ "$file" == *.json ]] && ! jq empty "$file" >/dev/null 2>&1; then
+      echo "  [✗] $file — некорректный JSON"; failed=1
     else
-      printf "  [✗] %s — ошибка в JSON\n" "$file"
-      failed=1
+      printf "  [✓] %s — доступен (права %s)\n" "$file" "$(stat -c %a "$file" 2>/dev/null || echo '?')"
     fi
   done
 
   echo
-  echo "3. Проверка конфигурации веб-сервера"
-  if [[ "$web_server" == "nginx" ]]; then
-    if [[ -r /etc/nginx/sites-available/tproxy-server ]]; then echo "  [✓] Конфигурация Nginx найдена"; else echo "  [✗] Конфигурация Nginx не найдена"; failed=1; fi
-    if nginx -t 2>&1; then echo "  [✓] Nginx-конфигурация корректна"; else echo "  [✗] Ошибка конфигурации Nginx"; failed=1; fi
-    if [[ -s "/etc/letsencrypt/live/$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null)/fullchain.pem" ]]; then
-      echo "  [✓] TLS-сертификат Let's Encrypt найден"
-    else
-      echo "  [✗] TLS-сертификат Let's Encrypt не найден"; failed=1
-    fi
+  echo "3. Локальные endpoints и backend"
+  if [[ -n "$admin" ]]; then
+    for endpoint in healthz readyz; do
+      if curl --fail --silent --max-time 4 "http://$admin/$endpoint" >/dev/null; then
+        echo "  [✓] $endpoint отвечает"
+      else
+        echo "  [✗] $endpoint недоступен ($admin)"; failed=1
+      fi
+    done
   else
-    if [[ -s /etc/caddy/Caddyfile && -x /usr/local/bin/caddy ]]; then
-      echo "  [✓] Caddyfile и бинарный файл Caddy найдены"
-    else
-      echo "  [✗] Caddyfile или бинарный файл Caddy не найдены"; failed=1
-    fi
+    echo "  [✗] Admin endpoint не задан"; failed=1
+  fi
+  if [[ "$backend_port" =~ ^[0-9]+$ ]] && nc -z -w 3 127.0.0.1 "$backend_port" 2>/dev/null; then
+    echo "  [✓] MTProxy backend доступен на 127.0.0.1:$backend_port"
+  else
+    echo "  [✗] MTProxy backend недоступен (порт ${backend_port:-не определён})"; failed=1
   fi
 
   echo
-  echo "4. Слушающие TCP-порты"
-  port_output="$(ss -lntp 2>/dev/null || true)"
-  if [[ -n "$port_output" ]]; then
-    printf '%s\n' "$port_output" | sed 's/^/  /'
+  echo "4. Веб-сервер, HTTPS и TLS"
+  if [[ "$web_server" == nginx ]]; then
+    if nginx -t 2>&1; then echo "  [✓] Nginx config valid"; else echo "  [✗] Ошибка конфигурации Nginx"; failed=1; fi
+    cert_path="/etc/letsencrypt/live/$host/fullchain.pem"
   else
-    echo "  [!] Не удалось получить список TCP-портов или нет слушающих портов"
+    if [[ -x /usr/local/bin/caddy && -s /etc/caddy/Caddyfile ]]; then
+      if TPROXY_HOSTNAME="$host" TPROXY_SITE_ROOT="$(jq -r '.public_dir // empty' /etc/tproxy-server/config.json 2>/dev/null)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+        echo "  [✓] Caddy config valid"
+      else
+        echo "  [✗] Ошибка конфигурации Caddy"; failed=1
+      fi
+    else
+      echo "  [✗] Caddyfile или бинарный файл отсутствует"; failed=1
+    fi
+    cert_path=""
+  fi
+
+  if [[ -n "$cert_path" ]]; then
+    if [[ -s "$cert_path" ]] && openssl x509 -in "$cert_path" -noout >/dev/null 2>&1; then
+      expiry="$(openssl x509 -in "$cert_path" -noout -enddate | cut -d= -f2-)"
+      if openssl x509 -in "$cert_path" -checkend 2592000 -noout >/dev/null 2>&1; then
+        echo "  [✓] TLS-сертификат действителен более 30 дней (до $expiry)"
+      else
+        echo "  [!] TLS-сертификат истекает в ближайшие 30 дней или уже истёк ($expiry)"
+        warnings=1
+      fi
+    else
+      echo "  [✗] TLS-сертификат не найден или повреждён: $cert_path"; failed=1
+    fi
+  fi
+
+  if [[ -n "$host" ]]; then
+    if curl --fail --silent --show-error --max-time 8 --resolve "$host:443:127.0.0.1" "https://$host/" -o /dev/null; then
+      echo "  [✓] HTTPS отвечает локально через выбранный vhost"
+    else
+      echo "  [✗] HTTPS-проверка не пройдена (127.0.0.1:443, домен $host)"; failed=1
+    fi
+    local -a dns_ips=()
+    mapfile -t dns_ips < <(dig +short A "$host" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' | sort -u)
+    if (("${#dns_ips[@]}")); then
+      echo "  [✓] DNS A: ${dns_ips[*]}"
+    else
+      echo "  [✗] DNS A-запись не найдена"; failed=1
+    fi
+    local aaaa
+    aaaa="$(dig +short AAAA "$host" @1.1.1.1 2>/dev/null | grep ':' | tr '\\n' ' ' || true)"
+    if [[ -n "$aaaa" ]]; then
+      echo "  [!] DNS AAAA задан: $aaaa — убедись, что IPv6 настроен и доступен извне"
+      warnings=1
+    else
+      echo "  [✓] DNS AAAA не задан"
+    fi
+  else
+    echo "  [✗] Домен не прочитан из config.json"; failed=1
   fi
 
   echo
-  echo "5. Последние ошибки служб"
-  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u "$web_server" -p err -n 8 --no-pager -o short-iso 2>/dev/null || true)"
+  echo "5. Порты и последние ошибки"
+  ss -lntp 2>/dev/null | sed 's/^/  /' || true
+  local log_output
+  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u "$web_server" -p err -n 12 --no-pager -o short-iso 2>/dev/null || true)"
   if [[ -n "$log_output" ]]; then
     printf '%s\n' "$log_output" | sed 's/^/  /'
   else
@@ -1577,37 +1658,79 @@ diagnostics_command() {
   echo
   echo "------------------------------------------------------------"
   if (( failed )); then
-    warn "Проверка завершена: обнаружены проблемы. Смотри строки [✗] выше."
-    echo "Подсказка: для подробного журнала выполни: journalctl -u ИМЯ_СЛУЖБЫ -n 50 --no-pager"
+    warn "Диагностика завершена: обнаружены ошибки."
+    return 1
+  elif (( warnings )); then
+    warn "Диагностика завершена: критических ошибок не найдено, есть предупреждения."
+    return 0
   else
-    ok "Проверка завершена: службы и JSON-конфигурации в порядке."
-    echo "Если подключение не работает, проверь доступность указанных портов и правила firewall."
+    ok "Диагностика завершена: основные проверки пройдены."
+    return 0
   fi
 }
+
 backup_command() {
   local dest="${1:-/root/tproxy-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
   [[ "$dest" = /* ]] || die "Путь backup должен быть абсолютным"
   install -d -m 0700 "$(dirname "$dest")"
-  local items=()
-  for p in etc/tproxy-server etc/mtproxy etc/caddy/Caddyfile etc/caddy/Caddyfile.d etc/nginx/sites-available/tproxy-server etc/letsencrypt etc/systemd/system/tproxy-server.service etc/systemd/system/mtproxy.service etc/systemd/system/tproxy-firewall.service etc/systemd/system/refresh-mtproxy-config.service etc/systemd/system/refresh-mtproxy-config.timer etc/systemd/system/caddy.service.d/tproxy.conf; do
-    [[ ! -e "/$p" ]] || items+=("$p")
+  [[ ! -e "$dest" ]] || die "Файл уже существует: $dest (не перезаписываю резервную копию)"
+
+  local -a items=()
+  local p
+  for p in \
+    etc/tproxy-server etc/mtproxy \
+    etc/caddy/Caddyfile etc/caddy/Caddyfile.d \
+    etc/nginx/sites-available/tproxy-server etc/nginx/sites-enabled/tproxy-server \
+    etc/nginx/conf.d/tproxy-websocket-map.conf \
+    etc/letsencrypt \
+    etc/systemd/system/tproxy-server.service \
+    etc/systemd/system/mtproxy.service \
+    etc/systemd/system/tproxy-firewall.service \
+    etc/systemd/system/refresh-mtproxy-config.service \
+    etc/systemd/system/refresh-mtproxy-config.timer \
+    etc/systemd/system/caddy.service \
+    etc/systemd/system/caddy.service.d/tproxy.conf \
+    etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx; do
+    [[ ! -e "/$p" && ! -L "/$p" ]] || items+=("$p")
   done
   (("${#items[@]}")) || die "Нет файлов конфигурации для резервирования"
-  tar -C / -czpf "$dest" "${items[@]}"
-  chmod 0600 "$dest"; ok "Резервная копия создана: $dest (0600)"
+
+  local tmp="${dest}.tmp.$$"
+  trap 'rm -f "$tmp"' RETURN
+  tar -C / -czpf "$tmp" "${items[@]}"
+  tar -tzf "$tmp" >/dev/null || die "Проверка созданного архива не пройдена"
+  chmod 0600 "$tmp"
+  mv -- "$tmp" "$dest"
+  trap - RETURN
+  ok "Резервная копия создана: $dest (0600)"
+  info "В архив включено объектов: ${#items[@]}; включая конфигурацию выбранного веб-сервера и TLS."
 }
+
 restore_command() {
   local archive="${1:-}"
   [[ -n "$archive" && -f "$archive" ]] || die "Укажи существующий архив: restore /absolute/path/backup.tar.gz"
   [[ "$archive" = /* ]] || die "Путь к архиву должен быть абсолютным"
-  local entry
+  tar -tzf "$archive" >/dev/null 2>&1 || die "Архив повреждён или имеет неподдерживаемый формат"
+
+  local entry normalized
   while IFS= read -r entry; do
-    [[ "$entry" != /* && "$entry" != *".."* ]] || die "Небезопасный путь в архиве: $entry"
+    normalized="${entry#./}"
+    [[ "$normalized" != /* ]] || die "Небезопасный абсолютный путь в архиве: $entry"
+    [[ ! "/$normalized/" =~ /\.\./ ]] || die "Небезопасный путь в архиве: $entry"
+    case "$normalized" in
+      etc/tproxy-server/*|etc/mtproxy/*|etc/caddy/*|etc/nginx/*|etc/letsencrypt/*|etc/systemd/system/tproxy-server.service|etc/systemd/system/mtproxy.service|etc/systemd/system/tproxy-firewall.service|etc/systemd/system/refresh-mtproxy-config.service|etc/systemd/system/refresh-mtproxy-config.timer|etc/systemd/system/caddy.service|etc/systemd/system/caddy.service.d/*) ;;
+      *) die "В архиве обнаружен путь вне разрешённого списка: $entry" ;;
+    esac
   done < <(tar -tzf "$archive")
-  confirm "Восстановить конфигурации из $archive? Текущие файлы будут перезаписаны." || die "восстановление отменено"
-  tar -C / -xzpf "$archive"; systemctl daemon-reload
-  ok "Конфигурации восстановлены. Проверь их и перезапусти службы вручную."
+
+  echo "Внимание: восстановление перезапишет файлы конфигурации и TLS-сертификаты."
+  confirm "Восстановить конфигурации из $archive?" || die "восстановление отменено"
+  tar -C / -xzpf "$archive" || die "Ошибка распаковки резервной копии"
+  systemctl daemon-reload
+  ok "Файлы восстановлены. Проверь конфигурацию веб-сервера и состояние служб."
+  info "Для проверки выполни: diagnostics"
 }
+
 show_tools_menu() {
   local choice archive
   while true; do
