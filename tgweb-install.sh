@@ -86,6 +86,39 @@ warn() {
   fi
 }
 
+# Цветные маркеры результатов проверок и состояний systemd.
+status_mark() {
+  local kind="$1" mark
+  case "$kind" in
+    ok) mark='[✓]' ;;
+    fail) mark='[✗]' ;;
+    warn) mark='[!]' ;;
+    *) mark='[?]' ;;
+  esac
+  if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+    case "$kind" in
+      ok) printf '\033[1;32m%s\033[0m' "$mark" ;;
+      fail) printf '\033[1;31m%s\033[0m' "$mark" ;;
+      warn) printf '\033[1;33m%s\033[0m' "$mark" ;;
+      *) printf '\033[1;36m%s\033[0m' "$mark" ;;
+    esac
+  else
+    printf '%s' "$mark"
+  fi
+}
+status_word() {
+  local state="$1"
+  if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+    case "$state" in
+      active) printf '\033[1;32m%s\033[0m' "$state" ;;
+      inactive|failed) printf '\033[1;31m%s\033[0m' "$state" ;;
+      *) printf '\033[1;33m%s\033[0m' "$state" ;;
+    esac
+  else
+    printf '%s' "$state"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -1624,9 +1657,9 @@ diagnostics_command() {
   for svc in tproxy-server mtproxy tproxy-firewall refresh-mtproxy-config.timer "$web_server"; do
     state="$(systemctl is-active "$svc" 2>/dev/null || true)"
     if [[ "$state" == active ]]; then
-      printf "  [✓] %-30s active\n" "$svc"
+      printf '  %s %-30s %s\n' "$(status_mark ok)" "$svc" "$(status_word active)"
     else
-      printf "  [✗] %-30s %s\n" "$svc" "${state:-unknown}"
+      printf '  %s %-30s %s\n' "$(status_mark fail)" "$svc" "$(status_word "${state:-unknown}")"
       failed=1
     fi
   done
@@ -1635,11 +1668,11 @@ diagnostics_command() {
   echo "2. Конфигурационные файлы и права"
   for file in /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json /etc/mtproxy/mtproxy.env; do
     if [[ ! -f "$file" ]]; then
-      echo "  [✗] $file — отсутствует"; failed=1
+      printf '  %s %s — отсутствует\n' "$(status_mark fail)" "$file"; failed=1
     elif [[ "$file" == *.json ]] && ! jq empty "$file" >/dev/null 2>&1; then
-      echo "  [✗] $file — некорректный JSON"; failed=1
+      printf '  %s %s — некорректный JSON\n' "$(status_mark fail)" "$file"; failed=1
     else
-      printf "  [✓] %s — доступен (права %s)\n" "$file" "$(stat -c %a "$file" 2>/dev/null || echo '?')"
+      printf '  %s %s — доступен (права %s)\n' "$(status_mark ok)" "$file" "$(stat -c %a "$file" 2>/dev/null || echo '?')"
     fi
   done
 
@@ -1648,34 +1681,34 @@ diagnostics_command() {
   if [[ -n "$admin" ]]; then
     for endpoint in healthz readyz; do
       if curl --fail --silent --max-time 4 "http://$admin/$endpoint" >/dev/null; then
-        echo "  [✓] $endpoint отвечает"
+        printf '  %s %s отвечает\n' "$(status_mark ok)" "$endpoint"
       else
-        echo "  [✗] $endpoint недоступен ($admin)"; failed=1
+        printf '  %s %s недоступен (%s)\n' "$(status_mark fail)" "$endpoint" "$admin"; failed=1
       fi
     done
   else
-    echo "  [✗] Admin endpoint не задан"; failed=1
+    printf '  %s Admin endpoint не задан\n' "$(status_mark fail)"; failed=1
   fi
   if [[ "$backend_port" =~ ^[0-9]+$ ]] && nc -z -w 3 127.0.0.1 "$backend_port" 2>/dev/null; then
-    echo "  [✓] MTProxy backend доступен на 127.0.0.1:$backend_port"
+    printf '  %s MTProxy backend доступен на 127.0.0.1:%s\n' "$(status_mark ok)" "$backend_port"
   else
-    echo "  [✗] MTProxy backend недоступен (порт ${backend_port:-не определён})"; failed=1
+    printf '  %s MTProxy backend недоступен (порт %s)\n' "$(status_mark fail)" "${backend_port:-не определён}"; failed=1
   fi
 
   echo
   echo "4. Веб-сервер, HTTPS и TLS"
   if [[ "$web_server" == nginx ]]; then
-    if nginx -t 2>&1; then echo "  [✓] Nginx config valid"; else echo "  [✗] Ошибка конфигурации Nginx"; failed=1; fi
+    if nginx -t 2>&1; then printf '  %s Nginx config valid\n' "$(status_mark ok)"; else printf '  %s Ошибка конфигурации Nginx\n' "$(status_mark fail)"; failed=1; fi
     cert_path="/etc/letsencrypt/live/$host/fullchain.pem"
   else
     if [[ -x /usr/local/bin/caddy && -s /etc/caddy/Caddyfile ]]; then
       if TPROXY_HOSTNAME="$host" TPROXY_SITE_ROOT="$(jq -r '.public_dir // empty' /etc/tproxy-server/config.json 2>/dev/null)" ACME_EMAIL="$(cat /etc/tproxy-server/acme-email 2>/dev/null || true)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-        echo "  [✓] Caddy config valid"
+        printf '  %s Caddy config valid\n' "$(status_mark ok)"
       else
-        echo "  [✗] Ошибка конфигурации Caddy"; failed=1
+        printf '  %s Ошибка конфигурации Caddy\n' "$(status_mark fail)"; failed=1
       fi
     else
-      echo "  [✗] Caddyfile или бинарный файл отсутствует"; failed=1
+      printf '  %s Caddyfile или бинарный файл отсутствует\n' "$(status_mark fail)"; failed=1
     fi
     cert_path=""
   fi
@@ -1684,39 +1717,39 @@ diagnostics_command() {
     if [[ -s "$cert_path" ]] && openssl x509 -in "$cert_path" -noout >/dev/null 2>&1; then
       expiry="$(openssl x509 -in "$cert_path" -noout -enddate | cut -d= -f2-)"
       if openssl x509 -in "$cert_path" -checkend 2592000 -noout >/dev/null 2>&1; then
-        echo "  [✓] TLS-сертификат действителен более 30 дней (до $expiry)"
+        printf '  %s TLS-сертификат действителен более 30 дней (до %s)\n' "$(status_mark ok)" "$expiry"
       else
-        echo "  [!] TLS-сертификат истекает в ближайшие 30 дней или уже истёк ($expiry)"
+        printf '  %s TLS-сертификат истекает в ближайшие 30 дней или уже истёк (%s)\n' "$(status_mark warn)" "$expiry"
         warnings=1
       fi
     else
-      echo "  [✗] TLS-сертификат не найден или повреждён: $cert_path"; failed=1
+      printf '  %s TLS-сертификат не найден или повреждён: %s\n' "$(status_mark fail)" "$cert_path"; failed=1
     fi
   fi
 
   if [[ -n "$host" ]]; then
     if curl --fail --silent --show-error --max-time 8 --resolve "$host:443:127.0.0.1" "https://$host/" -o /dev/null; then
-      echo "  [✓] HTTPS отвечает локально через выбранный vhost"
+      printf '  %s HTTPS отвечает локально через выбранный vhost\n' "$(status_mark ok)"
     else
-      echo "  [✗] HTTPS-проверка не пройдена (127.0.0.1:443, домен $host)"; failed=1
+      printf '  %s HTTPS-проверка не пройдена (127.0.0.1:443, домен %s)\n' "$(status_mark fail)" "$host"; failed=1
     fi
     local -a dns_ips=()
     mapfile -t dns_ips < <(dig +short A "$host" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u)
     if (("${#dns_ips[@]}")); then
-      echo "  [✓] DNS A: ${dns_ips[*]}"
+      printf '  %s DNS A: %s\n' "$(status_mark ok)" "${dns_ips[*]}"
     else
-      echo "  [✗] DNS A-запись не найдена"; failed=1
+      printf '  %s DNS A-запись не найдена\n' "$(status_mark fail)"; failed=1
     fi
     local aaaa
     aaaa="$(dig +short AAAA "$host" @1.1.1.1 2>/dev/null | grep ':' | tr '\n' ' ' || true)"
     if [[ -n "$aaaa" ]]; then
-      echo "  [!] DNS AAAA задан: $aaaa — убедись, что IPv6 настроен и доступен извне"
+      printf '  %s DNS AAAA задан: %s — убедись, что IPv6 настроен и доступен извне\n' "$(status_mark warn)" "$aaaa"
       warnings=1
     else
-      echo "  [✓] DNS AAAA не задан"
+      printf '  %s DNS AAAA не задан\n' "$(status_mark ok)"
     fi
   else
-    echo "  [✗] Домен не прочитан из config.json"; failed=1
+    printf '  %s Домен не прочитан из config.json\n' "$(status_mark fail)"; failed=1
   fi
 
   echo
@@ -1727,7 +1760,7 @@ diagnostics_command() {
   if [[ -n "$log_output" ]]; then
     printf '%s\n' "$log_output" | sed 's/^/  /'
   else
-    echo "  [✓] Ошибок уровня error в доступном журнале не найдено"
+    printf '  %s Ошибок уровня error в доступном журнале не найдено\n' "$(status_mark ok)"
   fi
 
   echo
