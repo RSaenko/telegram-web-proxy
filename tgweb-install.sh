@@ -1331,7 +1331,11 @@ EOF
   if [[ -n "$output" ]]; then
     install -m 0600 /dev/null "$output"
     # В файл сохраняем обычный текст без ANSI-кодов цветов.
-    printf '%s\n' "$report" | sed -E 
+    printf '%s\n' "$report" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$output"
+    echo "Конфигурация сохранена: $output (0600)"
+  else
+    printf '%s\n' "$report"
+  fi
   if [[ -n "$link" ]]; then print_proxy_qr_terminal "$link"; fi
 }
 
