@@ -413,7 +413,7 @@ get_public_ipv4() {
   for probe in https://api.ipify.org https://ifconfig.co/ip https://icanhazip.com; do
     candidate="$(curl --fail --silent --location --ipv4 --max-time 8 \
       --proto '=https' --proto-redir '=https' --tlsv1.2 "$probe" 2>/dev/null | tr -d '[:space:]')" || continue
-    if [[ "$candidate" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]]; then
+    if [[ "$candidate" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
       printf '%s' "$candidate"
       return 0
     fi
@@ -425,7 +425,7 @@ check_dns() {
   info "Проверяю DNS для $HOSTNAME_ARG…"
   local -a ips=()
   local public_ip="" matched=0 ip aaaa
-  mapfile -t ips < <(dig +short A "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' | sort -u)
+  mapfile -t ips < <(dig +short A "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u)
   (("${#ips[@]}")) || die "A-запись для $HOSTNAME_ARG не найдена через 1.1.1.1"
 
   if public_ip="$(get_public_ipv4)"; then
@@ -436,7 +436,7 @@ check_dns() {
     warn "Не удалось определить публичный IPv4 сервера; A-записи: ${ips[*]}. Сравнение пропущено."
   fi
 
-  aaaa="$(dig +short AAAA "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep ':' | sort -u | tr '\\n' ' ' || true)"
+  aaaa="$(dig +short AAAA "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep ':' | sort -u | tr '\n' ' ' || true)"
   if [[ -n "$aaaa" ]]; then
     if ip -6 route get 2606:4700:4700::1111 2>/dev/null | grep -q 'src'; then
       warn "Для домена есть AAAA-запись ($aaaa). Проверь, что IPv6 сервера совпадает с ней и TCP 80/443 доступны по IPv6."
@@ -1628,14 +1628,14 @@ diagnostics_command() {
       echo "  [✗] HTTPS-проверка не пройдена (127.0.0.1:443, домен $host)"; failed=1
     fi
     local -a dns_ips=()
-    mapfile -t dns_ips < <(dig +short A "$host" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\\.){3}[0-9]{1,3}$' | sort -u)
+    mapfile -t dns_ips < <(dig +short A "$host" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u)
     if (("${#dns_ips[@]}")); then
       echo "  [✓] DNS A: ${dns_ips[*]}"
     else
       echo "  [✗] DNS A-запись не найдена"; failed=1
     fi
     local aaaa
-    aaaa="$(dig +short AAAA "$host" @1.1.1.1 2>/dev/null | grep ':' | tr '\\n' ' ' || true)"
+    aaaa="$(dig +short AAAA "$host" @1.1.1.1 2>/dev/null | grep ':' | tr '\n' ' ' || true)"
     if [[ -n "$aaaa" ]]; then
       echo "  [!] DNS AAAA задан: $aaaa — убедись, что IPv6 настроен и доступен извне"
       warnings=1
