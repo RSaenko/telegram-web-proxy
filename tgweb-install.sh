@@ -1749,7 +1749,7 @@ show_tools_menu() {
     case "$choice" in
       1)
         require_root
-        diagnostics_command
+        diagnostics_command || true
         read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
         ;;
       2)
