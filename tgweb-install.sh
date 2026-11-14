@@ -1309,19 +1309,6 @@ run_config() {
 Слушающие TCP-порты:
 $(ss -lntp 2>/dev/null || true)
 
-Состояние служб:
-$(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer "$web_server"; do
-  state="$(systemctl is-active "$s" 2>/dev/null || true)"
-  if [[ "$state" == active ]]; then
-    mark="$(status_mark ok)"
-  elif [[ "$state" == inactive || "$state" == failed ]]; then
-    mark="$(status_mark fail)"
-  else
-    mark="$(status_mark warn)"
-  fi
-  printf '  %s %-28s %s\n' "$mark" "$s" "$(status_word "${state:-unknown}")"
-done)
-
 Ссылки подключения:
 ${link:-<не удалось сформировать: проверь config.json и profiles.json>}
 QR-код (PNG)          : ${link:+/etc/tproxy-server/proxy-qr.png}
@@ -1330,11 +1317,42 @@ EOF
 )"
   if [[ -n "$output" ]]; then
     install -m 0600 /dev/null "$output"
-    # В файл сохраняем обычный текст без ANSI-кодов цветов.
     printf '%s\n' "$report" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$output"
     echo "Конфигурация сохранена: $output (0600)"
   else
     printf '%s\n' "$report"
+  fi
+
+  # Выводим состояния служб отдельно от многострочного отчёта,
+  # чтобы ANSI-цвета гарантированно доходили до терминала.
+  if [[ -n "$output" ]]; then
+    {
+      printf '\nСостояние служб:\n'
+      for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer "$web_server"; do
+        state="$(systemctl is-active "$s" 2>/dev/null || true)"
+        if [[ "$state" == active ]]; then
+          mark='[✓]'
+        elif [[ "$state" == inactive || "$state" == failed ]]; then
+          mark='[✗]'
+        else
+          mark='[!]'
+        fi
+        printf '  %s %-28s %s\n' "$mark" "$s" "${state:-unknown}"
+      done
+    } >> "$output"
+  else
+    printf '\nСостояние служб:\n'
+    for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer "$web_server"; do
+      state="$(systemctl is-active "$s" 2>/dev/null || true)"
+      if [[ "$state" == active ]]; then
+        mark="$(status_mark ok)"
+      elif [[ "$state" == inactive || "$state" == failed ]]; then
+        mark="$(status_mark fail)"
+      else
+        mark="$(status_mark warn)"
+      fi
+      printf '  %s %-28s %s\n' "$mark" "$s" "$(status_word "${state:-unknown}")"
+    done
   fi
   if [[ -n "$link" ]]; then print_proxy_qr_terminal "$link"; fi
 }
