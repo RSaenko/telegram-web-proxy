@@ -10,7 +10,7 @@
 #    sudo ./tproxy-manager.sh purge     [--yes]
 # ============================================================================
 set -Eeuo pipefail
-trap 'if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then printf "\\033[1;31m❌ ERROR\\033[0m at line %s: %s\\n" "$LINENO" "$BASH_COMMAND" >&2; else printf "❌ ERROR at line %s: %s\\n" "$LINENO" "$BASH_COMMAND" >&2; fi' ERR
+trap 'if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then printf "\\033[1;31m❌ ERROR\\033[0m at line %s: %s\\n" "$LINENO" "$BASH_COMMAND" >&2; else printf "❌ ERROR at line %s: %s\\n" "$LINENO" "$BASH_COMMAND" >&2; fi' ERR
 umask 077
 
 # ----------------------------- константы ------------------------------------
@@ -57,7 +57,7 @@ GO_BIN=""
 # Цветные статусы: цвет применяется только к ключу, текст сообщения не меняется.
 # Для отключения цветов: NO_COLOR=1 ./tgweb-install.sh
 die() {
-  if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+  if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
     printf '\033[1;31m[ОШИБКА]\033[0m %s\n' "$*" >&2
   else
     printf '[ОШИБКА] %s\n' "$*" >&2
@@ -65,21 +65,21 @@ die() {
   exit 1
 }
 info() {
-  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
     printf '\033[1;36m[ИНФО]\033[0m %s\n' "$*"
   else
     printf '[ИНФО] %s\n' "$*"
   fi
 }
 ok() {
-  if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
     printf '\033[1;32m[OK]\033[0m %s\n' "$*"
   else
     printf '[OK] %s\n' "$*"
   fi
 }
 warn() {
-  if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
+  if [[ -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
     printf '\033[1;33m[ВНИМАНИЕ]\033[0m %s\n' "$*" >&2
   else
     printf '[ВНИМАНИЕ] %s\n' "$*" >&2
