@@ -58,31 +58,31 @@ GO_BIN=""
 # Для отключения цветов: NO_COLOR=1 ./tgweb-install.sh
 die() {
   if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
-    printf '\\033[1;31m[ОШИБКА]\\033[0m %s\\n' "$*" >&2
+    printf '\033[1;31m[ОШИБКА]\033[0m %s\n' "$*" >&2
   else
-    printf '[ОШИБКА] %s\\n' "$*" >&2
+    printf '[ОШИБКА] %s\n' "$*" >&2
   fi
   exit 1
 }
 info() {
   if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    printf '\\033[1;36m[ИНФО]\\033[0m %s\\n' "$*"
+    printf '\033[1;36m[ИНФО]\033[0m %s\n' "$*"
   else
-    printf '[ИНФО] %s\\n' "$*"
+    printf '[ИНФО] %s\n' "$*"
   fi
 }
 ok() {
   if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
-    printf '\\033[1;32m[OK]\\033[0m %s\\n' "$*"
+    printf '\033[1;32m[OK]\033[0m %s\n' "$*"
   else
-    printf '[OK] %s\\n' "$*"
+    printf '[OK] %s\n' "$*"
   fi
 }
 warn() {
   if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
-    printf '\\033[1;33m[ВНИМАНИЕ]\\033[0m %s\\n' "$*" >&2
+    printf '\033[1;33m[ВНИМАНИЕ]\033[0m %s\n' "$*" >&2
   else
-    printf '[ВНИМАНИЕ] %s\\n' "$*" >&2
+    printf '[ВНИМАНИЕ] %s\n' "$*" >&2
   fi
 }
 
