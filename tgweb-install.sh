@@ -449,10 +449,10 @@ check_dns() {
   local -a ips=()
   local public_ip="" matched=0 ip aaaa cloudflare_ranges="" cloudflare_count=0
   mapfile -t ips < <(dig +short A "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u)
-  (("\${#ips[@]}")) || die "A-запись для $HOSTNAME_ARG не найдена через 1.1.1.1"
+  (("${#ips[@]}")) || die "A-запись для $HOSTNAME_ARG не найдена через 1.1.1.1"
 
   if public_ip="$(get_public_ipv4)"; then
-    for ip in "\${ips[@]}"; do
+    for ip in "${ips[@]}"; do
       [[ "$ip" == "$public_ip" ]] && matched=1
     done
 
@@ -462,24 +462,24 @@ check_dns() {
       cloudflare_ranges="$(curl --fail --silent --location --max-time 8 \
         --proto '=https' --proto-redir '=https' --tlsv1.2 https://www.cloudflare.com/ips-v4 2>/dev/null || true)"
       if [[ -n "$cloudflare_ranges" ]]; then
-        for ip in "\${ips[@]}"; do
+        for ip in "${ips[@]}"; do
           if is_cloudflare_ipv4 "$ip" "$cloudflare_ranges"; then
             ((cloudflare_count += 1))
           fi
         done
       fi
 
-      if (( cloudflare_count == \${#ips[@]} )); then
-        warn "Обнаружен Cloudflare Proxy: DNS A возвращает адреса Cloudflare (\${ips[*]}), а не IP сервера ($public_ip). Прямая проверка IP пропущена."
+      if (( cloudflare_count == ${#ips[@]} )); then
+        warn "Обнаружен Cloudflare Proxy: DNS A возвращает адреса Cloudflare (${ips[*]}), а не IP сервера ($public_ip). Прямая проверка IP пропущена."
         warn "Убедись, что в Cloudflare включён корректный SSL/TLS-режим (Full strict) и origin доступен по TCP 80/443."
       elif (( cloudflare_count > 0 )); then
-        die "DNS A содержит смешанные адреса Cloudflare и origin (\${ips[*]}), но IP сервера ($public_ip) не найден. Проверь DNS-записи и режим Proxy."
+        die "DNS A содержит смешанные адреса Cloudflare и origin (${ips[*]}), но IP сервера ($public_ip) не найден. Проверь DNS-записи и режим Proxy."
       else
-        die "DNS A-запись (\${ips[*]}) не указывает на публичный IPv4 сервера ($public_ip). Если используется Cloudflare Proxy, проверь доступность списка IP Cloudflare и настройки DNS."
+        die "DNS A-запись (${ips[*]}) не указывает на публичный IPv4 сервера ($public_ip). Если используется Cloudflare Proxy, проверь доступность списка IP Cloudflare и настройки DNS."
       fi
     fi
   else
-    warn "Не удалось определить публичный IPv4 сервера; A-записи: \${ips[*]}. Сравнение пропущено."
+    warn "Не удалось определить публичный IPv4 сервера; A-записи: ${ips[*]}. Сравнение пропущено."
   fi
 
   aaaa="$(dig +short AAAA "$HOSTNAME_ARG" @1.1.1.1 2>/dev/null | grep ':' | sort -u | tr '\n' ' ' || true)"
