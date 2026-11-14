@@ -311,7 +311,7 @@ interactive_fill() {
   fi
 
   while :; do
-    read -r -p "Домен (A-запись должна вести на сервер или быть проксирована Cloudflare): " input || die "ввод прерван"
+    read -r -p "Домен (A-запись должна вести на IP адрес сервера): " input || die "ввод прерван"
     [[ -n "$input" ]] || { echo "  ⚠️  Укажи доменное имя"; continue; }
     if err="$(validate_hostname "$input")"; then HOSTNAME_ARG="$input"; break; fi
     echo "  ⚠️  $err"
