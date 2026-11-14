@@ -493,6 +493,7 @@ check_dns() {
     ok "AAAA-запись не задана"
   fi
 }
+
 fetch_repo() {
   if [[ -d "$REPO_DIR/.git" ]]; then
     info "Получаю зафиксированную версию $UPSTREAM_COMMIT"
