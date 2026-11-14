@@ -846,10 +846,12 @@ CSS
 </svg>
 SVG
 
-  chown -R root:root "$SITE_DIR"
-  find "$SITE_DIR" -type d -exec chmod 0755 {} +
-  find "$SITE_DIR" -type f -exec chmod 0644 {} +
-  ok "Сайт-заглушка установлена в $SITE_DIR; каталоги 0755, файлы 0644"
+  chown root:root "$SITE_DIR" "$SITE_DIR/index.html" "$SITE_DIR/about.html" "$SITE_DIR/privacy.html" \
+    "$SITE_DIR/assets" "$SITE_DIR/assets/styles.css" "$SITE_DIR/assets/favicon.svg"
+  chmod 0755 "$SITE_DIR" "$SITE_DIR/assets"
+  chmod 0644 "$SITE_DIR/index.html" "$SITE_DIR/about.html" "$SITE_DIR/privacy.html" \
+    "$SITE_DIR/assets/styles.css" "$SITE_DIR/assets/favicon.svg"
+  ok "Права файлов сайта-заглушки настроены (каталоги 0755, файлы 0644)"
 }
 
 ensure_tproxy_user() {
@@ -1594,7 +1596,7 @@ diagnostics_command() {
     cert_path="/etc/letsencrypt/live/$host/fullchain.pem"
   else
     if [[ -x /usr/local/bin/caddy && -s /etc/caddy/Caddyfile ]]; then
-      if TPROXY_HOSTNAME="$host" TPROXY_SITE_ROOT="$(jq -r '.public_dir // empty' /etc/tproxy-server/config.json 2>/dev/null)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+      if TPROXY_HOSTNAME="$host" TPROXY_SITE_ROOT="$(jq -r '.public_dir // empty' /etc/tproxy-server/config.json 2>/dev/null)" ACME_EMAIL="$(cat /etc/tproxy-server/acme-email 2>/dev/null || true)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
         echo "  [✓] Caddy config valid"
       else
         echo "  [✗] Ошибка конфигурации Caddy"; failed=1
@@ -1718,7 +1720,7 @@ restore_command() {
     [[ "$normalized" != /* ]] || die "Небезопасный абсолютный путь в архиве: $entry"
     [[ ! "/$normalized/" =~ /\.\./ ]] || die "Небезопасный путь в архиве: $entry"
     case "$normalized" in
-      etc/tproxy-server/*|etc/mtproxy/*|etc/caddy/*|etc/nginx/*|etc/letsencrypt/*|etc/systemd/system/tproxy-server.service|etc/systemd/system/mtproxy.service|etc/systemd/system/tproxy-firewall.service|etc/systemd/system/refresh-mtproxy-config.service|etc/systemd/system/refresh-mtproxy-config.timer|etc/systemd/system/caddy.service|etc/systemd/system/caddy.service.d/*) ;;
+      etc/tproxy-server|etc/tproxy-server/*|etc/mtproxy|etc/mtproxy/*|etc/caddy|etc/caddy/*|etc/nginx|etc/nginx/*|etc/letsencrypt|etc/letsencrypt/*|etc/systemd/system/tproxy-server.service|etc/systemd/system/mtproxy.service|etc/systemd/system/tproxy-firewall.service|etc/systemd/system/refresh-mtproxy-config.service|etc/systemd/system/refresh-mtproxy-config.timer|etc/systemd/system/caddy.service|etc/systemd/system/caddy.service.d/*) ;;
       *) die "В архиве обнаружен путь вне разрешённого списка: $entry" ;;
     esac
   done < <(tar -tzf "$archive")
