@@ -1311,7 +1311,15 @@ $(ss -lntp 2>/dev/null || true)
 
 Состояние служб:
 $(for s in mtproxy tproxy-firewall tproxy-server refresh-mtproxy-config.timer "$web_server"; do
-  printf '  %-28s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || echo unknown)"
+  state="$(systemctl is-active "$s" 2>/dev/null || true)"
+  if [[ "$state" == active ]]; then
+    mark="$(status_mark ok)"
+  elif [[ "$state" == inactive || "$state" == failed ]]; then
+    mark="$(status_mark fail)"
+  else
+    mark="$(status_mark warn)"
+  fi
+  printf '  %s %-28s %s\n' "$mark" "$s" "$(status_word "${state:-unknown}")"
 done)
 
 Ссылки подключения:
@@ -1322,7 +1330,638 @@ EOF
 )"
   if [[ -n "$output" ]]; then
     install -m 0600 /dev/null "$output"
-    printf '%s\n' "$report" > "$output"
+    # В файл сохраняем обычный текст без ANSI-кодов цветов.
+    printf '%s\n' "$report" | sed -E 
+  if [[ -n "$link" ]]; then print_proxy_qr_terminal "$link"; fi
+}
+
+load_existing_config() {
+  local cfg=/etc/tproxy-server/config.json profiles=/etc/tproxy-server/profiles.json
+  local envf=/etc/mtproxy/mtproxy.env dropin=/etc/systemd/system/caddy.service.d/tproxy.conf v
+  [[ -r "$cfg" && -r "$profiles" && -r "$envf" ]] || die "Не найдена полная установленная конфигурация; сначала выполни config"
+  command -v jq >/dev/null 2>&1 || die "Для чтения настроек нужен jq"
+  v="$(jq -er '.public_hostname | select(type == "string" and length > 0)' "$cfg")" || die "Не удалось прочитать hostname"
+  [[ -n "$HOSTNAME_ARG" ]] || HOSTNAME_ARG="$v"
+  v="$(jq -r '.base_path // "none"' "$cfg")"; [[ -n "$BASE_PATH_ARG" ]] || BASE_PATH_ARG="$v"
+  v="$(jq -r '.listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$RELAY_PORT" ]] || RELAY_PORT="$v"
+  v="$(jq -r '.admin_listen // "" | split(":")[-1]' "$cfg")"; [[ -n "$ADMIN_PORT" ]] || ADMIN_PORT="$v"
+  v="$(jq -r '.public_dir // empty' "$cfg")"; [[ -n "$v" ]] && SITE_DIR="$v"
+  if [[ "$WEB_SERVER_SET" -eq 0 ]]; then if [[ -r /etc/tproxy-server/web-server ]]; then WEB_SERVER="$(< /etc/tproxy-server/web-server)"; elif systemctl is-enabled --quiet nginx 2>/dev/null; then WEB_SERVER=nginx; else WEB_SERVER=caddy; fi; fi
+  v="$(jq -er '.profiles[0].secret | select(type == "string" and length > 0)' "$profiles")" || die "Не удалось прочитать секрет"
+  [[ -n "$SECRET_ARG" ]] || SECRET_ARG="$v"
+  if [[ "$SECRET_PREFIX_MODE_SET" -eq 0 ]]; then
+    if [[ "$SECRET_ARG" == dd* ]]; then SECRET_PREFIX_MODE="dd"; else SECRET_PREFIX_MODE="plain"; fi
+  fi
+  v="$(sed -n 's/^MTPROXY_WORKERS=//p' "$envf" | head -n1)"; [[ -n "$WORKERS_ARG" ]] || WORKERS_ARG="${v:-1}"
+  v="$(sed -n 's/^MTPROXY_MAX_CONNECTIONS=//p' "$envf" | head -n1)"; [[ -n "$MAXCONN_ARG" ]] || MAXCONN_ARG="${v:-4096}"
+  if [[ -r /etc/tproxy-server/acme-email ]]; then
+    v="$(head -n1 /etc/tproxy-server/acme-email | xargs || true)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  if [[ -z "$EMAIL_ARG" && -r "$dropin" ]]; then
+    v="$(sed -n 's/^Environment=ACME_EMAIL=//p' "$dropin" | head -n1)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  if [[ -z "$EMAIL_ARG" && -d /etc/letsencrypt/renewal ]]; then
+    v="$(grep -RhoE '^[[:space:]]*email[[:space:]]*=[[:space:]]*[^[:space:]]+' /etc/letsencrypt/renewal 2>/dev/null | head -n1 | cut -d= -f2- | xargs || true)"
+    [[ -n "$EMAIL_ARG" ]] || EMAIL_ARG="$v"
+  fi
+  if [[ -z "$EMAIL_ARG" ]]; then
+    if [[ "$NONINTERACTIVE" == "1" ]]; then
+      die "Не удалось прочитать email; укажи --email"
+    fi
+    prompt_value EMAIL_ARG "Email для Let's Encrypt" validate_email
+  fi
+  validate_hostname "$HOSTNAME_ARG" >/dev/null || die "Некорректный текущий hostname"
+  validate_email "$EMAIL_ARG" >/dev/null || die "Некорректный текущий email"
+  install -d -m 0755 /etc/tproxy-server
+  printf '%s\n' "$EMAIL_ARG" > /etc/tproxy-server/acme-email
+  chmod 0600 /etc/tproxy-server/acme-email
+  validate_port "$RELAY_PORT" >/dev/null || die "Некорректный текущий relay-порт"
+  validate_port "$ADMIN_PORT" >/dev/null || die "Некорректный текущий admin-порт"
+  validate_secret "$SECRET_ARG" >/dev/null || die "Некорректный текущий секрет"
+  validate_base_path "$BASE_PATH_ARG" >/dev/null || die "Некорректный текущий base_path"
+}
+
+prompt_update_value() {
+  local var="$1" label="$2" current="$3" validator="$4" input err
+  while :; do
+    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$current}"
+    if err="$("$validator" "$input")"; then printf -v "$var" '%s' "$input"; return 0; fi
+    echo "  ⚠️  $err — попробуй ещё раз"
+  done
+}
+
+prompt_update_port() {
+  local var="$1" label="$2" current="$3" input err
+  while :; do
+    read -r -p "$label [$current] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$current}"
+    if ! err="$(validate_port "$input")"; then echo "  ⚠️  $err"; continue; fi
+    if [[ "$input" != "$current" ]] && port_in_use "$input"; then echo "  ⚠️  порт $input уже занят"; continue; fi
+    printf -v "$var" '%s' "$input"; return 0
+  done
+}
+
+prompt_update_secret() {
+  local answer s1 s2
+  read -r -p "Секрет MTProxy [текущий сохранится] (Enter — оставить, n — заменить): " answer || die "ввод прерван"
+  [[ "$answer" =~ ^[Nn]$ ]] || return 0
+  while :; do
+    read -r -s -p "Новый секрет (Enter — сгенерировать): " s1 || die "ввод прерван"; echo
+    if [[ -z "$s1" ]]; then
+      SECRET_ARG="$(openssl rand -hex 16)"
+      [[ "$SECRET_PREFIX_MODE" == "dd" ]] && SECRET_ARG="dd$SECRET_ARG"
+      info "Сгенерирован новый секрет"; return 0
+    fi
+    read -r -s -p "Повторите секрет: " s2 || die "ввод прерван"; echo
+    [[ "$s1" == "$s2" ]] || { echo "  ⚠️  секреты не совпадают"; continue; }
+    validate_secret "$s1" >/dev/null || { echo "  ⚠️  Неверный формат секрета"; continue; }
+    SECRET_ARG="$s1"; return 0
+  done
+}
+
+interactive_update_fill() {
+  load_existing_config
+  if [[ "$NONINTERACTIVE" == "1" ]]; then
+    [[ "$RELAY_PORT" != "$ADMIN_PORT" ]] || die "relay- и admin-порты должны различаться"
+    return 0
+  fi
+  echo
+  echo "────────────────────────────────────────────────────────────"
+  echo "  Обновление tproxy-server"
+  echo "  Текущие значения указаны в [квадратных скобках]."
+  echo "  Enter — оставить без изменений."
+  echo "────────────────────────────────────────────────────────────"
+  prompt_update_value HOSTNAME_ARG "Домен" "$HOSTNAME_ARG" validate_hostname
+  # Email is retained from the existing ACME configuration; --email can override it.
+  prompt_update_value BASE_PATH_ARG "Base path (none — корень)" "$BASE_PATH_ARG" validate_base_path
+  prompt_update_port RELAY_PORT "Relay-порт" "$RELAY_PORT"
+  prompt_update_port ADMIN_PORT "Admin-порт" "$ADMIN_PORT"
+  [[ "$RELAY_PORT" != "$ADMIN_PORT" ]] || die "relay- и admin-порты должны различаться"
+  prompt_update_secret
+
+  local input
+  while :; do
+    read -r -p "MTProxy workers [$WORKERS_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$WORKERS_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]] && (( input <= 256 )); then WORKERS_ARG="$input"; break; fi
+    echo "  ⚠️  workers должен быть числом от 1 до 256"
+  done
+  while :; do
+    read -r -p "MTProxy max connections [$MAXCONN_ARG] (Enter — оставить): " input || die "ввод прерван"
+    input="${input:-$MAXCONN_ARG}"
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then MAXCONN_ARG="$input"; break; fi
+    echo "  ⚠️  max connections должен быть положительным числом"
+  done
+
+  echo
+  echo "Итоговые параметры:"
+  echo "  Домен      : $HOSTNAME_ARG"
+  echo "  Email      : $EMAIL_ARG"
+  echo "  Base path  : $BASE_PATH_ARG"
+  echo "  Relay port : $RELAY_PORT"
+  echo "  Admin port : $ADMIN_PORT"
+  echo "  Секрет     : сохранён / изменён (значение скрыто)"
+  echo "  Workers    : $WORKERS_ARG"
+  echo "  Max conns  : $MAXCONN_ARG"
+  echo "  Каталог    : $SITE_DIR"
+  confirm "Применить обновление?" || die "обновление отменено"
+}
+
+
+show_operation_overview() {
+  echo
+  echo "--------------------------------------------------------------------"
+  if [[ "$MODE" == "update" ]]; then
+    echo "  ПЕРЕД ОБНОВЛЕНИЕМ"
+    cat <<'EOF'
+  Будут обновлены исходники и компоненты, пересобран tproxy-server,
+  обновлены конфигурации и перезапущены службы.
+  Текущие настройки будут предложены по умолчанию, каталог сайта сохранится.
+EOF
+  else
+    echo "  ПЕРЕД УСТАНОВКОЙ"
+    cat <<'EOF'
+  Будут установлены зависимости и Caddy, собраны tproxy-server и MTProxy,
+  созданы конфигурации и службы, настроен HTTPS и запущены сервисы.
+  Домен должен указывать на IP этого сервера.
+EOF
+  fi
+  cat <<'EOF'
+
+  ПОРТЫ
+  - 80/tcp и 443/tcp — публичные HTTP/HTTPS для Caddy/Nginx; должны быть
+    доступны извне. При установке их не должен занимать другой веб-сервер;
+    при обновлении их может занимать уже установленный Caddy или Nginx.
+  - 8080/tcp и 8081/tcp — внутренние порты приложения (127.0.0.1).
+    При установке должны быть свободны; при смене портов при обновлении
+    свободными должны быть новые значения. Не открывать в интернет.
+  - 2398/tcp и 8888/tcp — внутренние порты MTProxy, закрыты firewall.
+
+  В firewall VPS разреши входящие TCP 80 и 443. UDP не требуется.
+  Нужен root-доступ; службы могут быть перезапущены.
+EOF
+  echo "--------------------------------------------------------------------"
+  echo
+}
+
+run_install() {
+  require_root
+  check_arch
+  check_os
+  show_operation_overview
+  if [[ "$MODE" == "update" ]]; then
+    interactive_update_fill
+  else
+    interactive_fill
+  fi
+  install -d -m 0755 /etc/tproxy-server
+  printf '%s\n' "$EMAIL_ARG" > /etc/tproxy-server/acme-email
+  chmod 0600 /etc/tproxy-server/acme-email
+  install_deps
+  check_dns
+  fetch_repo
+  resolve_base_path
+  ensure_tproxy_user
+  local previous_web_server=""
+  previous_web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  # Останавливаем конкурирующий веб-сервер ДО проверки/перезапуска выбранного:
+  # иначе он продолжит занимать 80/443 (особенно при установке без marker-файла).
+  if [[ "$WEB_SERVER" == "caddy" ]]; then
+    if [[ "$previous_web_server" == "nginx" ]]; then
+      remove_nginx
+    else
+      systemctl disable --now nginx.service 2>/dev/null || true
+    fi
+    install_caddy
+  else
+    if [[ "$previous_web_server" == "caddy" ]]; then
+      remove_caddy
+    else
+      systemctl disable --now caddy.service 2>/dev/null || true
+    fi
+    install_nginx_packages
+  fi
+  install_mtproxy_backend
+  ensure_go
+  build_tproxy
+  install_stub_site
+  write_configs
+  write_mtproxy_env
+  install_units
+  if [[ "$WEB_SERVER" == "caddy" ]]; then install_caddyfile; else install_nginx_config; fi
+  validate_configs
+  start_services
+  wait_ready || die "relay не стал ready"
+  print_summary
+}
+
+# ============================================================================
+#  УДАЛЕНИЕ
+# ============================================================================
+
+run_uninstall() {
+  require_root
+  local installed_web_server
+  installed_web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  # Совместимость со старыми установками без marker-файла.
+  if [[ "$installed_web_server" != "caddy" && "$installed_web_server" != "nginx" ]]; then
+    if systemctl is-active --quiet caddy.service || systemctl is-enabled --quiet caddy.service 2>/dev/null || \
+       [[ -x /usr/local/bin/caddy || -x /usr/bin/caddy ]]; then
+      installed_web_server="caddy"
+    elif systemctl is-active --quiet nginx.service || systemctl is-enabled --quiet nginx.service 2>/dev/null || \
+         dpkg-query -W -f='${Status}' nginx 2>/dev/null | grep -q 'install ok installed'; then
+      installed_web_server="nginx"
+    fi
+  fi
+  echo "------------------------------------------------------------"
+  echo "  Удаление tproxy-server"
+  echo "------------------------------------------------------------"
+  echo "Будет удалено:"
+  echo "  - сервисы: tproxy-server, mtproxy, tproxy-firewall, refresh-mtproxy-config"
+  echo "  - каталоги: $REPO_DIR, /etc/tproxy-server, /etc/mtproxy; сайт $SITE_DIR сохраняется"
+  echo "  - бинарники: /usr/local/bin/tproxy-server, /usr/local/bin/mtproxy"
+  echo "  - nftables: inet tproxy_backend"
+  echo "  - пользователи: tproxy, mtproxy"
+  if [[ $KEEP_WEB_SERVER -eq 0 ]]; then echo "  - веб-сервер: будет спрошено отдельно"; else echo "  - веб-сервер: НЕ будет удалён (--keep-web-server)"; fi
+  echo
+  confirm "Продолжить?" || die "отменено"
+
+  local svc
+  for svc in tproxy-server mtproxy tproxy-firewall refresh-mtproxy-config.timer refresh-mtproxy-config.service; do
+    systemctl stop "$svc" 2>/dev/null || true
+    systemctl disable "$svc" 2>/dev/null || true
+  done
+  rm -f /etc/systemd/system/tproxy-server.service
+  rm -f /etc/systemd/system/mtproxy.service
+  rm -f /etc/systemd/system/tproxy-firewall.service
+  rm -f /etc/systemd/system/refresh-mtproxy-config.service
+  rm -f /etc/systemd/system/refresh-mtproxy-config.timer
+  rm -rf /etc/systemd/system/tproxy-server.service.d
+  rm -f /etc/tproxy-server/web-server
+  systemctl daemon-reload
+
+  nft delete table inet tproxy_backend 2>/dev/null || true
+
+  rm -rf "$REPO_DIR" /etc/tproxy-server /etc/mtproxy
+  info "Каталог сайта $SITE_DIR сохранён."
+  rm -f /usr/local/bin/tproxy-server /usr/local/bin/mtproxy
+  rm -f /usr/local/sbin/refresh-mtproxy-config
+
+  userdel -r tproxy 2>/dev/null || true
+  userdel -r mtproxy 2>/dev/null || true
+
+  if [[ $KEEP_WEB_SERVER -eq 0 ]] && confirm "Удалить веб-сервер ${installed_web_server:-Caddy/Nginx}?"; then
+    case "$installed_web_server" in caddy) remove_caddy ;; nginx) remove_nginx ;; *) warn "Не удалось определить установленный веб-сервер; веб-серверы не затронуты" ;; esac
+  fi
+
+  ok "Удаление завершено"
+}
+
+run_purge() {
+  run_uninstall
+  echo
+  echo "------------------------------------------------------------"
+  echo "  Удаление пакетов"
+  echo "------------------------------------------------------------"
+  warn "Будут удалены: ${PURGE_PACKAGES[*]}"
+  warn "Эти пакеты могут использоваться другими сервисами (Docker, firewall, git-репозитории)."
+  confirm "Продолжить?" || die "отменено"
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get remove -y --purge "${PURGE_PACKAGES[@]}" 2>/dev/null || true
+  apt-get autoremove -y --purge 2>/dev/null || true
+  ok "Пакеты удалены"
+}
+
+# ============================================================================
+#  МЕНЮ
+# ============================================================================
+
+diagnostics_command() {
+  local failed=0 warnings=0 svc state file web_server host relay admin backend backend_port cert_path expiry
+  web_server="$(cat /etc/tproxy-server/web-server 2>/dev/null || true)"
+  [[ "$web_server" == "nginx" || "$web_server" == "caddy" ]] || {
+    if systemctl is-enabled --quiet nginx 2>/dev/null; then web_server=nginx; else web_server=caddy; fi
+  }
+  host="$(jq -r '.public_hostname // empty' /etc/tproxy-server/config.json 2>/dev/null || true)"
+  relay="$(jq -r '.listen // empty' /etc/tproxy-server/config.json 2>/dev/null || true)"
+  admin="$(jq -r '.admin_listen // empty' /etc/tproxy-server/config.json 2>/dev/null || true)"
+  backend="$(jq -r '.profiles[0].backend // empty' /etc/tproxy-server/profiles.json 2>/dev/null || true)"
+  backend_port="${backend##*:}"
+
+  echo
+  echo "------------------------------------------------------------"
+  echo "  РАСШИРЕННАЯ ДИАГНОСТИКА СЕРВЕРА"
+  echo "------------------------------------------------------------"
+
+  echo
+  echo "1. Состояние служб"
+  for svc in tproxy-server mtproxy tproxy-firewall refresh-mtproxy-config.timer "$web_server"; do
+    state="$(systemctl is-active "$svc" 2>/dev/null || true)"
+    if [[ "$state" == active ]]; then
+      printf '  %s %-30s %s\n' "$(status_mark ok)" "$svc" "$(status_word active)"
+    else
+      printf '  %s %-30s %s\n' "$(status_mark fail)" "$svc" "$(status_word "${state:-unknown}")"
+      failed=1
+    fi
+  done
+
+  echo
+  echo "2. Конфигурационные файлы и права"
+  for file in /etc/tproxy-server/config.json /etc/tproxy-server/profiles.json /etc/mtproxy/mtproxy.env; do
+    if [[ ! -f "$file" ]]; then
+      printf '  %s %s — отсутствует\n' "$(status_mark fail)" "$file"; failed=1
+    elif [[ "$file" == *.json ]] && ! jq empty "$file" >/dev/null 2>&1; then
+      printf '  %s %s — некорректный JSON\n' "$(status_mark fail)" "$file"; failed=1
+    else
+      printf '  %s %s — доступен (права %s)\n' "$(status_mark ok)" "$file" "$(stat -c %a "$file" 2>/dev/null || echo '?')"
+    fi
+  done
+
+  echo
+  echo "3. Локальные endpoints и backend"
+  if [[ -n "$admin" ]]; then
+    for endpoint in healthz readyz; do
+      if curl --fail --silent --max-time 4 "http://$admin/$endpoint" >/dev/null; then
+        printf '  %s %s отвечает\n' "$(status_mark ok)" "$endpoint"
+      else
+        printf '  %s %s недоступен (%s)\n' "$(status_mark fail)" "$endpoint" "$admin"; failed=1
+      fi
+    done
+  else
+    printf '  %s Admin endpoint не задан\n' "$(status_mark fail)"; failed=1
+  fi
+  if [[ "$backend_port" =~ ^[0-9]+$ ]] && nc -z -w 3 127.0.0.1 "$backend_port" 2>/dev/null; then
+    printf '  %s MTProxy backend доступен на 127.0.0.1:%s\n' "$(status_mark ok)" "$backend_port"
+  else
+    printf '  %s MTProxy backend недоступен (порт %s)\n' "$(status_mark fail)" "${backend_port:-не определён}"; failed=1
+  fi
+
+  echo
+  echo "4. Веб-сервер, HTTPS и TLS"
+  if [[ "$web_server" == nginx ]]; then
+    if nginx -t 2>&1; then printf '  %s Nginx config valid\n' "$(status_mark ok)"; else printf '  %s Ошибка конфигурации Nginx\n' "$(status_mark fail)"; failed=1; fi
+    cert_path="/etc/letsencrypt/live/$host/fullchain.pem"
+  else
+    if [[ -x /usr/local/bin/caddy && -s /etc/caddy/Caddyfile ]]; then
+      if TPROXY_HOSTNAME="$host" TPROXY_SITE_ROOT="$(jq -r '.public_dir // empty' /etc/tproxy-server/config.json 2>/dev/null)" ACME_EMAIL="$(cat /etc/tproxy-server/acme-email 2>/dev/null || true)" /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+        printf '  %s Caddy config valid\n' "$(status_mark ok)"
+      else
+        printf '  %s Ошибка конфигурации Caddy\n' "$(status_mark fail)"; failed=1
+      fi
+    else
+      printf '  %s Caddyfile или бинарный файл отсутствует\n' "$(status_mark fail)"; failed=1
+    fi
+    cert_path=""
+  fi
+
+  if [[ -n "$cert_path" ]]; then
+    if [[ -s "$cert_path" ]] && openssl x509 -in "$cert_path" -noout >/dev/null 2>&1; then
+      expiry="$(openssl x509 -in "$cert_path" -noout -enddate | cut -d= -f2-)"
+      if openssl x509 -in "$cert_path" -checkend 2592000 -noout >/dev/null 2>&1; then
+        printf '  %s TLS-сертификат действителен более 30 дней (до %s)\n' "$(status_mark ok)" "$expiry"
+      else
+        printf '  %s TLS-сертификат истекает в ближайшие 30 дней или уже истёк (%s)\n' "$(status_mark warn)" "$expiry"
+        warnings=1
+      fi
+    else
+      printf '  %s TLS-сертификат не найден или повреждён: %s\n' "$(status_mark fail)" "$cert_path"; failed=1
+    fi
+  fi
+
+  if [[ -n "$host" ]]; then
+    if curl --fail --silent --show-error --max-time 8 --resolve "$host:443:127.0.0.1" "https://$host/" -o /dev/null; then
+      printf '  %s HTTPS отвечает локально через выбранный vhost\n' "$(status_mark ok)"
+    else
+      printf '  %s HTTPS-проверка не пройдена (127.0.0.1:443, домен %s)\n' "$(status_mark fail)" "$host"; failed=1
+    fi
+    local -a dns_ips=()
+    mapfile -t dns_ips < <(dig +short A "$host" @1.1.1.1 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | sort -u)
+    if (("${#dns_ips[@]}")); then
+      printf '  %s DNS A: %s\n' "$(status_mark ok)" "${dns_ips[*]}"
+    else
+      printf '  %s DNS A-запись не найдена\n' "$(status_mark fail)"; failed=1
+    fi
+    local aaaa
+    aaaa="$(dig +short AAAA "$host" @1.1.1.1 2>/dev/null | grep ':' | tr '\n' ' ' || true)"
+    if [[ -n "$aaaa" ]]; then
+      printf '  %s DNS AAAA задан: %s — убедись, что IPv6 настроен и доступен извне\n' "$(status_mark warn)" "$aaaa"
+      warnings=1
+    else
+      printf '  %s DNS AAAA не задан\n' "$(status_mark ok)"
+    fi
+  else
+    printf '  %s Домен не прочитан из config.json\n' "$(status_mark fail)"; failed=1
+  fi
+
+  echo
+  echo "5. Порты и последние ошибки"
+  ss -lntp 2>/dev/null | sed 's/^/  /' || true
+  local log_output
+  log_output="$(journalctl -u tproxy-server -u mtproxy -u tproxy-firewall -u "$web_server" -p err -n 12 --no-pager -o short-iso 2>/dev/null || true)"
+  if [[ -n "$log_output" ]]; then
+    printf '%s\n' "$log_output" | sed 's/^/  /'
+  else
+    printf '  %s Ошибок уровня error в доступном журнале не найдено\n' "$(status_mark ok)"
+  fi
+
+  echo
+  echo "------------------------------------------------------------"
+  if (( failed )); then
+    warn "Диагностика завершена: обнаружены ошибки."
+    return 1
+  elif (( warnings )); then
+    warn "Диагностика завершена: критических ошибок не найдено, есть предупреждения."
+    return 0
+  else
+    ok "Диагностика завершена: основные проверки пройдены."
+    return 0
+  fi
+}
+
+backup_command() {
+  local dest="${1:-/root/tproxy-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
+  [[ "$dest" = /* ]] || die "Путь backup должен быть абсолютным"
+  install -d -m 0700 "$(dirname "$dest")"
+  [[ ! -e "$dest" ]] || die "Файл уже существует: $dest (не перезаписываю резервную копию)"
+
+  local -a items=()
+  local p
+  for p in \
+    etc/tproxy-server etc/mtproxy \
+    etc/caddy/Caddyfile etc/caddy/Caddyfile.d \
+    etc/nginx/sites-available/tproxy-server etc/nginx/sites-enabled/tproxy-server \
+    etc/nginx/conf.d/tproxy-websocket-map.conf \
+    etc/letsencrypt \
+    etc/systemd/system/tproxy-server.service \
+    etc/systemd/system/mtproxy.service \
+    etc/systemd/system/tproxy-firewall.service \
+    etc/systemd/system/refresh-mtproxy-config.service \
+    etc/systemd/system/refresh-mtproxy-config.timer \
+    etc/systemd/system/caddy.service \
+    etc/systemd/system/caddy.service.d/tproxy.conf \
+    etc/letsencrypt/renewal-hooks/deploy/reload-tproxy-nginx; do
+    [[ ! -e "/$p" && ! -L "/$p" ]] || items+=("$p")
+  done
+  (("${#items[@]}")) || die "Нет файлов конфигурации для резервирования"
+
+  local tmp="${dest}.tmp.$$"
+  trap 'rm -f "$tmp"' RETURN
+  tar -C / -czpf "$tmp" "${items[@]}"
+  tar -tzf "$tmp" >/dev/null || die "Проверка созданного архива не пройдена"
+  chmod 0600 "$tmp"
+  mv -- "$tmp" "$dest"
+  trap - RETURN
+  ok "Резервная копия создана: $dest (0600)"
+  info "В архив включено объектов: ${#items[@]}; включая конфигурацию выбранного веб-сервера и TLS."
+}
+
+restore_command() {
+  local archive="${1:-}"
+  [[ -n "$archive" && -f "$archive" ]] || die "Укажи существующий архив: restore /absolute/path/backup.tar.gz"
+  [[ "$archive" = /* ]] || die "Путь к архиву должен быть абсолютным"
+  tar -tzf "$archive" >/dev/null 2>&1 || die "Архив повреждён или имеет неподдерживаемый формат"
+
+  local entry normalized
+  while IFS= read -r entry; do
+    normalized="${entry#./}"
+    [[ "$normalized" != /* ]] || die "Небезопасный абсолютный путь в архиве: $entry"
+    [[ ! "/$normalized/" =~ /\.\./ ]] || die "Небезопасный путь в архиве: $entry"
+    case "$normalized" in
+      etc/tproxy-server|etc/tproxy-server/*|etc/mtproxy|etc/mtproxy/*|etc/caddy|etc/caddy/*|etc/nginx|etc/nginx/*|etc/letsencrypt|etc/letsencrypt/*|etc/systemd/system/tproxy-server.service|etc/systemd/system/mtproxy.service|etc/systemd/system/tproxy-firewall.service|etc/systemd/system/refresh-mtproxy-config.service|etc/systemd/system/refresh-mtproxy-config.timer|etc/systemd/system/caddy.service|etc/systemd/system/caddy.service.d/*) ;;
+      *) die "В архиве обнаружен путь вне разрешённого списка: $entry" ;;
+    esac
+  done < <(tar -tzf "$archive")
+
+  echo "Внимание: восстановление перезапишет файлы конфигурации и TLS-сертификаты."
+  confirm "Восстановить конфигурации из $archive?" || die "восстановление отменено"
+  tar -C / -xzpf "$archive" || die "Ошибка распаковки резервной копии"
+  systemctl daemon-reload
+  ok "Файлы восстановлены. Проверь конфигурацию веб-сервера и состояние служб."
+  info "Для проверки выполни: diagnostics"
+}
+
+show_tools_menu() {
+  local choice archive
+  while true; do
+    echo
+    echo "------------------------------------------------------------"
+    echo "  Инструменты"
+    echo "------------------------------------------------------------"
+    echo "  1) Диагностика (службы, порты, конфигурации и ошибки)"
+    echo "  2) Создать резервную копию"
+    echo "  3) Восстановить резервную копию"
+    echo "  4) Назад"
+    echo
+    read -r -p "Выбор [1-4]: " choice
+    case "$choice" in
+      1)
+        require_root
+        diagnostics_command || true
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      2)
+        read -r -p "Путь к архиву (Enter — путь по умолчанию): " archive
+        require_root
+        if [[ -n "$archive" ]]; then backup_command "$archive"; else backup_command; fi
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      3)
+        read -e -r -p "Абсолютный путь к архиву: " archive
+        [[ -n "$archive" ]] || { warn "Путь к архиву не указан"; continue; }
+        require_root
+        restore_command "$archive"
+        read -r -p "Нажми Enter, чтобы вернуться в меню инструментов..." _
+        ;;
+      4) return 0 ;;
+    esac
+  done
+}
+show_menu() {
+  echo
+  echo "------------------------------------------------------------"
+  echo "  tproxy-manager — что делаем?"
+  echo "------------------------------------------------------------"
+  echo "  1) Установить tproxy-server"
+  echo "  2) Обновить (без пересоздания существующих сервисов)"
+  echo "  3) Удалить tproxy-server (веб-сервер оставить)"
+  echo "  4) Удалить всё, включая пакеты"
+  echo "  5) Просмотреть текущую конфигурацию"
+  echo "  6) Инструменты"
+  echo "  7) Выход"
+  echo
+  local choice
+  read -r -p "Выбор [1-7]: " choice
+  case "$choice" in
+    1) MODE=install ;;
+    2) MODE=update; SKIP_TESTS=1 ;;
+    3) MODE=uninstall; KEEP_WEB_SERVER=1 ;;
+    4) MODE=purge ;;
+    5) MODE=config ;;
+    6) MODE=tools ;;
+    7) exit 0 ;;
+    *) die "Неверный выбор" ;;
+  esac
+}
+
+# ============================================================================
+#  MAIN
+# ============================================================================
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    while true; do
+      MODE=""
+      show_menu
+      case "$MODE" in
+        tools)
+          show_tools_menu
+          ;;
+        config)
+          require_root
+          run_config
+          read -r -p "Нажми Enter, чтобы вернуться в главное меню..." _
+          ;;
+        install)
+          run_install
+          return 0
+          ;;
+        update)
+          run_install
+          return 0
+          ;;
+        uninstall)
+          run_uninstall
+          return 0
+          ;;
+        purge)
+          run_purge
+          return 0
+          ;;
+      esac
+    done
+  fi
+
+  MODE="$1"; shift
+  case "$MODE" in
+    install)   parse_install_args "$@"; run_install ;;
+    update)    SKIP_TESTS=1; parse_install_args "$@"; run_install ;;
+    uninstall) parse_uninstall_args "$@"; run_uninstall ;;
+    purge)     parse_uninstall_args "$@"; run_purge ;;
+    config)    require_root; run_config "$@" ;;
+    diagnostics) require_root; diagnostics_command ;;
+    backup)    require_root; backup_command "$@" ;;
+    restore)   require_root; restore_command "$@" ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) die "Unknown mode: $MODE (install|update|uninstall|purge|config|diagnostics|backup|restore)" ;;
+  esac
+}
+
+main "$@"
+s/\\x1B\\[[0-9;]*[[:alpha:]]//g' > "$output"
     echo "Конфигурация сохранена: $output (0600)"
   else
     printf '%s\n' "$report"
